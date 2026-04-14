@@ -6,13 +6,13 @@ use std::{
 use bevy::{app::ScheduleRunnerPlugin, prelude::*, state::app::StatesPlugin};
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::{
+    RenetChannelsExt, RenetServer, RepliconRenetPlugins,
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
-    RenetChannelsExt, RenetServer, RepliconRenetPlugins,
 };
 use shared::{
     components::*,
-    hex::{generate_grid, HexPosition},
+    hex::{HexPosition, generate_grid},
     plugin::SharedPlugin,
 };
 
@@ -126,7 +126,10 @@ fn spawn_grid(mut commands: Commands) {
         },
     ));
 
-    println!("Spawned grid with radius {GRID_RADIUS} ({} tiles)", 3 * GRID_RADIUS * GRID_RADIUS + 3 * GRID_RADIUS + 1);
+    println!(
+        "Spawned grid with radius {GRID_RADIUS} ({} tiles)",
+        3 * GRID_RADIUS * GRID_RADIUS + 3 * GRID_RADIUS + 1
+    );
 }
 
 fn handle_new_clients(
@@ -138,11 +141,7 @@ fn handle_new_clients(
     for client_entity in &new_clients {
         let color_index = color_counter.next();
         let player_entity = commands
-            .spawn((
-                Replicated,
-                Player { color_index },
-                HexPosition::new(0, 0),
-            ))
+            .spawn((Replicated, Player { color_index }, HexPosition::new(0, 0)))
             .id();
 
         player_map
@@ -192,7 +191,10 @@ fn update_turn_phase(
         }
     } else if state.phase == TurnPhase::WaitingForPlayers {
         state.phase = TurnPhase::Accepting;
-        println!("Enough players ({count}), accepting moves for turn {}", state.turn_number);
+        println!(
+            "Enough players ({count}), accepting moves for turn {}",
+            state.turn_number
+        );
     }
 }
 
@@ -229,7 +231,10 @@ fn handle_move(
     };
 
     if !current_pos.is_neighbor(&target) {
-        println!("Rejected move: {:?} is not a neighbor of {:?}", target, current_pos);
+        println!(
+            "Rejected move: {:?} is not a neighbor of {:?}",
+            target, current_pos
+        );
         return;
     }
     if !target.in_bounds(GRID_RADIUS) {
@@ -239,10 +244,9 @@ fn handle_move(
 
     pending_moves.moves.insert(player_entity, target);
     println!(
-        "Move accepted: player {player_entity} -> {:?} ({}/{})",
+        "Move accepted: player {player_entity} -> {:?} ({}/?)",
         target,
-        pending_moves.moves.len(),
-        "?"
+        pending_moves.moves.len()
     );
 }
 

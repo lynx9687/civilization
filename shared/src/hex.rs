@@ -7,14 +7,7 @@ pub struct HexPosition {
     pub r: i32,
 }
 
-const AXIAL_DIRECTIONS: [(i32, i32); 6] = [
-    (1, 0),
-    (1, -1),
-    (0, -1),
-    (-1, 0),
-    (-1, 1),
-    (0, 1),
-];
+const AXIAL_DIRECTIONS: [(i32, i32); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
 
 impl HexPosition {
     pub fn new(q: i32, r: i32) -> Self {
@@ -130,7 +123,11 @@ mod tests {
         // All 6 directions should be neighbors
         for &(dq, dr) in &AXIAL_DIRECTIONS {
             let neighbor = HexPosition::new(dq, dr);
-            assert!(origin.is_neighbor(&neighbor), "{:?} should be neighbor of origin", neighbor);
+            assert!(
+                origin.is_neighbor(&neighbor),
+                "{:?} should be neighbor of origin",
+                neighbor
+            );
         }
         // Non-neighbors
         assert!(!origin.is_neighbor(&HexPosition::new(2, 0)));
@@ -144,7 +141,10 @@ mod tests {
         assert_eq!(origin.distance(&origin), 0);
         assert_eq!(origin.distance(&HexPosition::new(1, 0)), 1);
         assert_eq!(origin.distance(&HexPosition::new(2, -1)), 2);
-        assert_eq!(HexPosition::new(-1, 2).distance(&HexPosition::new(2, -2)), 4);
+        assert_eq!(
+            HexPosition::new(-1, 2).distance(&HexPosition::new(2, -2)),
+            4
+        );
     }
 
     #[test]
@@ -179,7 +179,12 @@ mod tests {
         let radius = 3;
         let grid = generate_grid(radius);
         for hex in &grid {
-            assert!(hex.in_bounds(radius), "{:?} should be in bounds of radius {}", hex, radius);
+            assert!(
+                hex.in_bounds(radius),
+                "{:?} should be in bounds of radius {}",
+                hex,
+                radius
+            );
         }
     }
 
@@ -187,8 +192,16 @@ mod tests {
     fn test_hex_to_pixel_origin() {
         let origin = HexPosition::new(0, 0);
         let pixel = hex_to_pixel(&origin, 32.0);
-        assert!((pixel.x).abs() < 1e-5, "x should be near 0, got {}", pixel.x);
-        assert!((pixel.y).abs() < 1e-5, "y should be near 0, got {}", pixel.y);
+        assert!(
+            (pixel.x).abs() < 1e-5,
+            "x should be near 0, got {}",
+            pixel.x
+        );
+        assert!(
+            (pixel.y).abs() < 1e-5,
+            "y should be near 0, got {}",
+            pixel.y
+        );
     }
 
     #[test]

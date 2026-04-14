@@ -38,14 +38,14 @@ pub struct YourPlayer {
 
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [
-    Color::srgb(0.9, 0.2, 0.2),  // red
-    Color::srgb(0.2, 0.4, 0.9),  // blue
-    Color::srgb(0.2, 0.8, 0.2),  // green
-    Color::srgb(0.9, 0.9, 0.2),  // yellow
-    Color::srgb(0.9, 0.2, 0.9),  // magenta
-    Color::srgb(0.2, 0.9, 0.9),  // cyan
-    Color::srgb(0.9, 0.6, 0.2),  // orange
-    Color::srgb(0.6, 0.2, 0.9),  // purple
+    Color::srgb(0.9, 0.2, 0.2), // red
+    Color::srgb(0.2, 0.4, 0.9), // blue
+    Color::srgb(0.2, 0.8, 0.2), // green
+    Color::srgb(0.9, 0.9, 0.2), // yellow
+    Color::srgb(0.9, 0.2, 0.9), // magenta
+    Color::srgb(0.2, 0.9, 0.9), // cyan
+    Color::srgb(0.9, 0.6, 0.2), // orange
+    Color::srgb(0.6, 0.2, 0.9), // purple
 ];
 
 pub fn player_color(index: u8) -> Color {
