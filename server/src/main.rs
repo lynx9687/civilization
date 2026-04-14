@@ -82,7 +82,11 @@ fn main() {
         .run();
 }
 
-fn start_server(mut commands: Commands, channels: Res<RepliconChannels>, addr: Res<BindAddr>) {
+fn start_server(
+    mut commands: Commands,
+    channels: Res<RepliconChannels>,
+    addr: Res<BindAddr>,
+) -> Result<()> {
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
 
@@ -95,7 +99,7 @@ fn start_server(mut commands: Commands, channels: Res<RepliconChannels>, addr: R
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
-    let socket = UdpSocket::bind(addr.0).unwrap();
+    let socket = UdpSocket::bind(addr.0)?;
     let server_config = ServerConfig {
         current_time,
         max_clients: 8,
@@ -103,12 +107,13 @@ fn start_server(mut commands: Commands, channels: Res<RepliconChannels>, addr: R
         authentication: ServerAuthentication::Unsecure,
         public_addresses: Default::default(),
     };
-    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
+    let transport = NetcodeServerTransport::new(server_config, socket)?;
 
     commands.insert_resource(server);
     commands.insert_resource(transport);
 
     println!("Server listening on {}", addr.0);
+    Ok(())
 }
 
 fn spawn_grid(mut commands: Commands) {
@@ -133,7 +138,7 @@ fn spawn_grid(mut commands: Commands) {
 }
 
 fn handle_new_clients(
-    new_clients: Query<Entity, Added<ConnectedClient>>,
+    new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
     mut player_map: ResMut<PlayerMap>,
     mut color_counter: ResMut<ColorCounter>,

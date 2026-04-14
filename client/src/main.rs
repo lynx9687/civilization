@@ -96,7 +96,7 @@ fn connect_to_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
     addr: Res<ServerAddr>,
-) {
+) -> Result<()> {
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
 
@@ -110,17 +110,18 @@ fn connect_to_server(
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
     let client_id = current_time.as_millis() as u64;
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
         protocol_id: PROTOCOL_ID,
         server_addr: addr.0,
         user_data: None,
     };
-    let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
+    let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;
 
     commands.insert_resource(client);
     commands.insert_resource(transport);
+    Ok(())
 }
 
 fn on_your_player(trigger: On<YourPlayer>, mut commands: Commands) {
@@ -334,9 +335,9 @@ fn update_turn_ui(
         TurnPhase::Accepting => {
             let submitted = last_submitted.0.is_some_and(|t| t >= state.turn_number);
             if submitted {
-                format!("Turn {} — Waiting for other players...", state.turn_number)
+                format!("Turn {} -- Waiting for other players...", state.turn_number)
             } else {
-                format!("Turn {} — Click a neighbor hex to move", state.turn_number)
+                format!("Turn {} -- Click a neighbor hex to move", state.turn_number)
             }
         }
     };
