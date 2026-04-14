@@ -83,7 +83,7 @@ Server-managed state machine with two phases:
 
 ### Server Startup
 
-- Server binary accepts a port via CLI argument (default: `5000`).
+- Server binary accepts a bind address and port via CLI arguments (default: `0.0.0.0:5000`). Binding to `0.0.0.0` means the server accepts connections from any network interface, which works both locally and when hosted remotely.
 - Starts a headless Bevy app, initializes replicon in server mode with renet transport.
 - Generates the hex grid (spawns tile entities).
 - Waits for client connections.
