@@ -12,7 +12,7 @@ use bevy_replicon_renet::{
 };
 use shared::{
     components::*,
-    hex::generate_grid,
+    hex::{generate_grid, HexPosition},
     plugin::SharedPlugin,
 };
 
@@ -21,6 +21,29 @@ const GRID_RADIUS: i32 = 5;
 
 #[derive(Resource)]
 struct BindAddr(SocketAddr);
+
+/// Maps ConnectedClient entity → Player entity.
+#[derive(Resource, Default)]
+struct PlayerMap {
+    client_to_player: std::collections::HashMap<Entity, Entity>,
+}
+
+/// Tracks next color index to assign.
+#[derive(Resource, Default)]
+struct ColorCounter(u8);
+
+impl ColorCounter {
+    fn next(&mut self) -> u8 {
+        let idx = self.0;
+        self.0 = (self.0 + 1) % 8;
+        idx
+    }
+}
+
+#[derive(Resource, Default)]
+struct PendingMoves {
+    moves: std::collections::HashMap<Entity, HexPosition>,
+}
 
 fn main() {
     let addr_str = std::env::args()
@@ -41,7 +64,14 @@ fn main() {
             SharedPlugin,
         ))
         .insert_resource(BindAddr(addr))
+        .init_resource::<PlayerMap>()
+        .init_resource::<ColorCounter>()
+        .init_resource::<PendingMoves>()
         .add_systems(Startup, (start_server, spawn_grid))
+        .add_systems(
+            Update,
+            (handle_new_clients, handle_disconnects, update_turn_phase).chain(),
+        )
         .run();
 }
 
@@ -90,4 +120,71 @@ fn spawn_grid(mut commands: Commands) {
     ));
 
     println!("Spawned grid with radius {GRID_RADIUS} ({} tiles)", 3 * GRID_RADIUS * GRID_RADIUS + 3 * GRID_RADIUS + 1);
+}
+
+fn handle_new_clients(
+    new_clients: Query<Entity, Added<ConnectedClient>>,
+    mut commands: Commands,
+    mut player_map: ResMut<PlayerMap>,
+    mut color_counter: ResMut<ColorCounter>,
+) {
+    for client_entity in &new_clients {
+        let color_index = color_counter.next();
+        let player_entity = commands
+            .spawn((
+                Replicated,
+                Player { color_index },
+                HexPosition::new(0, 0),
+            ))
+            .id();
+
+        player_map
+            .client_to_player
+            .insert(client_entity, player_entity);
+
+        let client_id = ClientId::Client(client_entity);
+        commands.server_trigger(ToClients {
+            mode: SendMode::Direct(client_id),
+            message: YourPlayer { color_index },
+        });
+
+        println!("Player joined (color {color_index}), entity: {player_entity}");
+    }
+}
+
+fn handle_disconnects(
+    mut disconnected: RemovedComponents<ConnectedClient>,
+    mut player_map: ResMut<PlayerMap>,
+    mut commands: Commands,
+    mut pending_moves: ResMut<PendingMoves>,
+) {
+    for client_entity in disconnected.read() {
+        if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
+            pending_moves.moves.remove(&player_entity);
+            commands.entity(player_entity).despawn();
+            println!("Player disconnected, despawned {player_entity}");
+        }
+    }
+}
+
+fn update_turn_phase(
+    players: Query<(), With<Player>>,
+    mut turn_state: Query<&mut TurnState>,
+    mut pending_moves: ResMut<PendingMoves>,
+) {
+    let count = players.iter().count();
+    let Ok(mut state) = turn_state.single_mut() else {
+        return;
+    };
+
+    if count < 2 {
+        if state.phase != TurnPhase::WaitingForPlayers {
+            state.phase = TurnPhase::WaitingForPlayers;
+            pending_moves.moves.clear();
+            println!("Not enough players ({count}), waiting...");
+        }
+    } else if state.phase == TurnPhase::WaitingForPlayers {
+        state.phase = TurnPhase::Accepting;
+        println!("Enough players ({count}), accepting moves for turn {}", state.turn_number);
+    }
 }
