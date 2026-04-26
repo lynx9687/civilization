@@ -55,6 +55,7 @@ fn main() {
             (
                 spawn_hex_visuals,
                 spawn_player_visuals,
+                spawn_unit_visuals,
                 update_player_positions,
                 update_hex_highlights,
                 handle_input,

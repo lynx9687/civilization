@@ -1,7 +1,7 @@
-use bevy::prelude::*;
+use bevy::{ecs::entity, prelude::*};
 use shared::{
     components::*,
-    hex::{HexPosition, hex_to_pixel},
+    hex::{HexPosition, hex_to_pixel}, units::*,
 };
 
 use crate::HEX_SIZE;
@@ -53,8 +53,28 @@ pub fn spawn_player_visuals(
     for (entity, player, pos) in &players {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
         let color = player_color(player.color_index);
+        println!("Adding player: {entity}, at pixel {pixel}");
         commands.entity(entity).insert((
             Mesh2d(meshes.add(Rectangle::new(SQUARE_SIZE, SQUARE_SIZE))),
+            MeshMaterial2d(materials.add(color)),
+            Transform::from_xyz(pixel.x, pixel.y, 1.0),
+        ));
+    }
+}
+
+//adds mesh for spawned units
+pub fn spawn_unit_visuals(
+    units: Query<(Entity, &ColorIndex, &HexPosition), Added<Unit>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    for (entity, color_index, pos) in &units {
+        let pixel = hex_to_pixel(pos, HEX_SIZE);
+        let color = player_color(color_index.0);
+        println!("Adding unit: {entity}, at pixel {pixel}");
+        commands.entity(entity).insert((
+            Mesh2d(meshes.add(Circle::new(SQUARE_SIZE))),
             MeshMaterial2d(materials.add(color)),
             Transform::from_xyz(pixel.x, pixel.y, 1.0),
         ));

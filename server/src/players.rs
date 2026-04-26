@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::{components::*, hex::HexPosition};
+use shared::{components::*, hex::HexPosition, units::*};
 
 use crate::turn::PendingMoves;
 
 /// Maps ConnectedClient entity → Player entity.
 #[derive(Resource, Default)]
 pub struct PlayerMap {
-    pub client_to_player: HashMap<Entity, Entity>,
+    pub client_to_player: HashMap<Entity, Entity>
 }
 
 /// Tracks next color index to assign.
@@ -47,6 +47,12 @@ pub fn handle_new_clients(
         });
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
+
+        let unit_entity = commands
+            .spawn((Replicated, Unit, HexPosition::new(1, 1), Owner(player_entity), ColorIndex(color_index)))
+            .id();
+
+        println!("Spawned unit: {unit_entity}, for player: {player_entity}");
     }
 }
 
