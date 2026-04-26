@@ -1,4 +1,4 @@
-use bevy::{ecs::entity, prelude::*};
+use bevy::{prelude::*};
 use shared::{
     components::*,
     hex::{HexPosition, hex_to_pixel}, units::*,

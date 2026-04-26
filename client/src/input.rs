@@ -3,6 +3,7 @@ use bevy_replicon::prelude::*;
 use shared::{
     components::*,
     hex::{HexPosition, pixel_to_hex},
+    events::*,
 };
 
 use crate::HEX_SIZE;
@@ -116,7 +117,7 @@ pub fn handle_input(
         return;
     }
 
-    commands.client_trigger(MoveAction { target });
+    commands.client_trigger(MoveAction {unit: Entity::PLACEHOLDER, target });
     last_submitted.0 = Some(state.turn_number);
     println!("Submitted move to {:?}", target);
 }

@@ -14,7 +14,7 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{components::*, plugin::SharedPlugin};
+use shared::{events::*, plugin::SharedPlugin};
 
 use input::*;
 use ui::*;

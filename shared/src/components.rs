@@ -24,18 +24,6 @@ pub enum TurnPhase {
     Accepting,
 }
 
-/// Client-to-server event: player wants to move to target hex.
-#[derive(Event, Serialize, Deserialize, Clone, Debug)]
-pub struct MoveAction {
-    pub target: crate::hex::HexPosition,
-}
-
-/// Server-to-client event: tells a client which player is theirs.
-#[derive(Event, Serialize, Deserialize, Clone, Debug)]
-pub struct YourPlayer {
-    pub color_index: u8,
-}
-
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [
     Color::srgb(0.9, 0.2, 0.2), // red

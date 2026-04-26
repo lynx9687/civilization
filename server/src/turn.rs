@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::{components::*, hex::HexPosition};
+use shared::{components::*, hex::HexPosition, events::*};
 
 use crate::GRID_RADIUS;
 use crate::players::PlayerMap;
