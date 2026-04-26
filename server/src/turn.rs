@@ -14,6 +14,21 @@ pub struct PendingMoves {
     pub moves: HashMap<Entity, HexPosition>,
 }
 
+/// Represents whether player is still making moves or has finished his turn
+#[derive(PartialEq, Eq)]
+pub enum PlayerTurnState {
+    InProgress,
+    Finished
+}
+
+/// Stores information about players
+/// TODO: add some methods to automatically update finished_cnt
+#[derive(Resource, Default)]
+pub struct PlayerState {
+    pub turn: HashMap<Entity, PlayerTurnState>,
+    pub finished_cnt: i32
+}
+
 pub fn update_turn_phase(
     players: Query<(), With<Player>>,
     mut turn_state: Query<&mut TurnState>,
@@ -37,6 +52,22 @@ pub fn update_turn_phase(
             state.turn_number
         );
     }
+}
+
+pub fn handle_finish_turn(
+    trigger: On<FromClient<FinishTurn>>,
+    mut player_state: ResMut<PlayerState>,
+) {
+    let client_entity = match trigger.client_id {
+        ClientId::Client(entity) => entity,
+        ClientId::Server => return,
+    };
+    let prev_state = player_state.turn.insert(client_entity, PlayerTurnState::Finished);
+    if prev_state.is_none_or(|state| state == PlayerTurnState::InProgress) {
+        player_state.finished_cnt += 1;
+    }
+    let cnt = player_state.finished_cnt;
+    println!("Received finish turn from player {client_entity}. Finished cnt {cnt}");
 }
 
 pub fn handle_move(
@@ -96,6 +127,7 @@ pub fn resolve_turn(
     players: Query<Entity, With<Player>>,
     mut positions: Query<&mut HexPosition, With<Player>>,
     mut turn_state: Query<&mut TurnState>,
+    mut player_state: ResMut<PlayerState>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -104,8 +136,8 @@ pub fn resolve_turn(
         return;
     }
 
-    let player_count = players.iter().count();
-    if player_count < 2 || pending_moves.moves.len() < player_count {
+    let player_count = players.iter().count() as i32;
+    if player_count < 2 || player_state.finished_cnt < player_count {
         return;
     }
 
@@ -121,6 +153,11 @@ pub fn resolve_turn(
         return;
     };
     state.turn_number += 1;
+    //reset finished players
+    player_state.finished_cnt = 0;
+    for val in player_state.turn.values_mut() {
+        *val = PlayerTurnState::InProgress;
+    }
     println!("Turn resolved! Now on turn {}", state.turn_number);
 }
 

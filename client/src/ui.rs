@@ -1,11 +1,16 @@
 use bevy::prelude::*;
+use bevy_replicon::prelude::ClientTriggerExt;
 use shared::components::*;
+use shared::events::FinishTurn;
 
 use crate::LocalPlayerColor;
 use crate::input::LastSubmittedTurn;
 
 #[derive(Component)]
 pub struct TurnUiText;
+
+#[derive(Component)]
+pub struct FinishTurnButton;
 
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
@@ -23,6 +28,42 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             ..default()
         },
     ));
+    commands.spawn((
+        FinishTurnButton,
+        Button,
+        Node {
+            width: Val::Px(150.0),
+            height: Val::Px(100.0),
+            border: UiRect::all(Val::Px(5.0)),
+            justify_content: JustifyContent::Center,
+            border_radius: BorderRadius::MAX,
+            position_type: PositionType::Absolute,
+            align_items: AlignItems::Center,
+            right: Val::Px(10.0),
+            bottom: Val::Px(10.0),
+            ..Default::default()
+        },
+        BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
+        BackgroundColor(Color::BLACK),
+    )).with_child((
+        Text::new("Finish Turn"),
+    ));
+}
+
+pub fn finish_turn_clicked(
+    click: On<Pointer<Click>>,
+    mut commands: Commands,
+    buttons: Query<(), With<FinishTurnButton>>,
+    turn_state: Query<&TurnState>,
+    mut last_submitted: ResMut<LastSubmittedTurn>,
+) {
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if buttons.contains(click.entity) {
+        commands.client_trigger(FinishTurn);
+        last_submitted.0 = Some(state.turn_number);
+    }
 }
 
 pub fn update_turn_ui(

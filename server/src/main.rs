@@ -50,8 +50,10 @@ fn main() {
         .init_resource::<PlayerMap>()
         .init_resource::<ColorCounter>()
         .init_resource::<PendingMoves>()
+        .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_move)
+        .add_observer(handle_finish_turn)
         .add_systems(
             Update,
             (
@@ -105,7 +107,6 @@ fn spawn_grid(mut commands: Commands) {
     }
 
     commands.spawn((
-        Replicated,
         TurnState {
             phase: TurnPhase::WaitingForPlayers,
             turn_number: 0,

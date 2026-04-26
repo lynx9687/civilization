@@ -13,3 +13,7 @@ pub struct MoveAction {
 pub struct YourPlayer {
     pub color_index: u8,
 }
+
+/// Client-to-server event: player finished his turn
+#[derive(Event, Serialize, Deserialize)]
+pub struct FinishTurn;

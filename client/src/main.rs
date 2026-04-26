@@ -50,6 +50,7 @@ fn main() {
         .init_resource::<HoveredHex>()
         .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
+        .add_observer(finish_turn_clicked)
         .add_systems(
             Update,
             (

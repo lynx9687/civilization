@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 
 /// Marker for hex tile entities.
@@ -12,7 +13,9 @@ pub struct Player {
 }
 
 /// Replicated turn state — lives on a single entity spawned by the server.
+/// We use entity rather than resource because entities can be autmatically replicated by replicon
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[require(Replicated)]
 pub struct TurnState {
     pub phase: TurnPhase,
     pub turn_number: u32,

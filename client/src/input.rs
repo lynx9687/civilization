@@ -83,7 +83,7 @@ pub fn handle_input(
     windows: Query<&Window>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     turn_state: Query<&TurnState>,
-    mut last_submitted: ResMut<LastSubmittedTurn>,
+    last_submitted: ResMut<LastSubmittedTurn>,
     local_color: Option<Res<LocalPlayerColor>>,
     players: Query<(&Player, &HexPosition), Without<HexTile>>,
 ) {
@@ -118,7 +118,6 @@ pub fn handle_input(
     }
 
     commands.client_trigger(MoveAction {unit: Entity::PLACEHOLDER, target });
-    last_submitted.0 = Some(state.turn_number);
     println!("Submitted move to {:?}", target);
 }
 
