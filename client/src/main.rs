@@ -14,7 +14,7 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{components::Player, events::*, plugin::SharedPlugin};
+use shared::{events::*, plugin::SharedPlugin};
 
 use input::*;
 use ui::*;
@@ -56,12 +56,11 @@ fn main() {
             Update,
             (
                 spawn_hex_visuals,
-                spawn_player_visuals,
                 spawn_unit_visuals,
-                update_player_positions,
+                update_uni_positions,
                 update_hex_highlights,
-                handle_input,
                 handle_left_click,
+                handle_right_click,
                 reset_submission_on_new_turn,
                 update_turn_ui,
             ),
@@ -102,10 +101,9 @@ fn connect_to_server(
 }
 
 fn on_your_player(
-    trigger: On<YourPlayer>, 
-    mut commands: Commands, 
+    trigger: On<YourPlayer>,
+    mut commands: Commands,
     mut controller: ResMut<Controller>,
-    players: Query<(Entity, &Player)>, 
 ) {
     let color_index = trigger.color_index;
     commands.insert_resource(LocalPlayerColor(color_index));

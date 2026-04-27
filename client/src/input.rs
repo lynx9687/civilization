@@ -1,11 +1,13 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::{
-    components::*, events::*, hex::{HexPosition, pixel_to_hex}, units::*
+    components::*,
+    events::*,
+    hex::{HexPosition, pixel_to_hex},
+    units::*,
 };
 
 use crate::HEX_SIZE;
-use crate::LocalPlayerColor;
 use crate::visuals::HexMaterials;
 
 /// Tracks which turn the local player last submitted a move for.
@@ -42,12 +44,8 @@ pub fn update_hex_highlights(
     mut tiles: Query<(&HexPosition, &mut MeshMaterial2d<ColorMaterial>), With<HexTile>>,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
-    local_color: Option<Res<LocalPlayerColor>>,
-    players: Query<(&Player, &HexPosition), Without<HexTile>>,
-    turn_state: Query<&TurnState>,
-    last_submitted: Res<LastSubmittedTurn>,
     controller: ResMut<Controller>,
-    units: Query<&HexPosition, With<Unit>>
+    units: Query<&HexPosition, With<Unit>>,
 ) {
     let cursor_hex = get_cursor_hex(&windows, &cameras);
     hovered.0 = cursor_hex;
@@ -55,7 +53,7 @@ pub fn update_hex_highlights(
     let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit {
         if let Ok(pos) = units.get(selected_unit) {
             pos.neighbors()
-        } else{
+        } else {
             Vec::new()
         }
     } else {
@@ -73,15 +71,14 @@ pub fn update_hex_highlights(
     }
 }
 
-pub fn handle_left_click (
-    mut commands: Commands,
+pub fn handle_left_click(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
-    units: Query<(Entity, &Owner, &HexPosition), With<Unit>>
+    units: Query<(Entity, &Owner, &HexPosition), With<Unit>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -121,32 +118,26 @@ pub fn handle_left_click (
     println!("Deselected unit");
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_input(
+pub fn handle_right_click(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     turn_state: Query<&TurnState>,
-    last_submitted: ResMut<LastSubmittedTurn>,
-    local_color: Option<Res<LocalPlayerColor>>,
-    players: Query<(&Player, &HexPosition), Without<HexTile>>,
+    last_submitted: Res<LastSubmittedTurn>,
+    mut controller: ResMut<Controller>,
+    units: Query<(&HexPosition, &Unit)>,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) {
+    if !mouse.just_pressed(MouseButton::Right) {
         return;
     }
-
-    let Some(ref local) = local_color else {
-        return;
-    };
-
+    //check whether turn is active
     let Ok(state) = turn_state.single() else {
         return;
     };
     if state.phase != TurnPhase::Accepting {
         return;
     }
-
     if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
         return;
     }
@@ -155,15 +146,23 @@ pub fn handle_input(
         return;
     };
 
-    let Some((_, current_pos)) = players.iter().find(|(p, _)| p.color_index == local.0) else {
+    // proceed only if unit is currently selected
+    let Some(unit_entity) = controller.selected_unit else {
         return;
     };
-    if !current_pos.is_neighbor(&target) {
-        return;
-    }
 
-    commands.client_trigger(MoveAction {unit: Entity::PLACEHOLDER, target });
-    println!("Submitted move to {:?}", target);
+    let Ok((unit_pos, unit)) = units.get(unit_entity) else {
+        return;
+    };
+
+    if target.is_neighbor(unit_pos) {
+        commands.client_trigger(MoveAction {
+            unit_id: unit.id,
+            target,
+        });
+        //deselect unit
+        controller.selected_unit = None;
+    }
 }
 
 pub fn reset_submission_on_new_turn(

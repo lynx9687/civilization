@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Client-to-server event: player wants to move unit to target hex.
 #[derive(Event, Serialize, Deserialize, Clone, Debug)]
 pub struct MoveAction {
-    pub unit: Entity,
+    pub unit_id: u32,
     pub target: crate::hex::HexPosition,
 }
 

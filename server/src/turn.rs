@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::{components::*, hex::HexPosition, events::*};
+use shared::units::*;
+use shared::{components::*, events::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
 use crate::players::PlayerMap;
@@ -18,7 +19,7 @@ pub struct PendingMoves {
 #[derive(PartialEq, Eq)]
 pub enum PlayerTurnState {
     InProgress,
-    Finished
+    Finished,
 }
 
 /// Stores information about players
@@ -26,7 +27,7 @@ pub enum PlayerTurnState {
 #[derive(Resource, Default)]
 pub struct PlayerState {
     pub turn: HashMap<Entity, PlayerTurnState>,
-    pub finished_cnt: i32
+    pub finished_cnt: i32,
 }
 
 pub fn update_turn_phase(
@@ -62,7 +63,9 @@ pub fn handle_finish_turn(
         ClientId::Client(entity) => entity,
         ClientId::Server => return,
     };
-    let prev_state = player_state.turn.insert(client_entity, PlayerTurnState::Finished);
+    let prev_state = player_state
+        .turn
+        .insert(client_entity, PlayerTurnState::Finished);
     if prev_state.is_none_or(|state| state == PlayerTurnState::InProgress) {
         player_state.finished_cnt += 1;
     }
@@ -72,21 +75,12 @@ pub fn handle_finish_turn(
 
 pub fn handle_move(
     trigger: On<FromClient<MoveAction>>,
+    mut commands: Commands,
     player_map: Res<PlayerMap>,
-    players: Query<&HexPosition, With<Player>>,
-    mut pending_moves: ResMut<PendingMoves>,
+    players: Query<&Player>,
+    units: Query<(Entity, &Unit, &HexPosition, &Owner)>,
     turn_state: Query<&TurnState>,
 ) {
-    let client_entity = match trigger.client_id {
-        ClientId::Client(entity) => entity,
-        ClientId::Server => return,
-    };
-    let target = trigger.message.target;
-
-    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
-        return;
-    };
-
     let Ok(state) = turn_state.single() else {
         return;
     };
@@ -94,38 +88,49 @@ pub fn handle_move(
         return;
     }
 
-    if pending_moves.moves.contains_key(&player_entity) {
-        return; // already submitted this turn
-    }
-
-    let Ok(current_pos) = players.get(player_entity) else {
+    let client_entity = match trigger.client_id {
+        ClientId::Client(entity) => entity,
+        ClientId::Server => return,
+    };
+    let unit_id = trigger.message.unit_id;
+    let target = trigger.message.target;
+    let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
 
-    if !current_pos.is_neighbor(&target) {
-        println!(
-            "Rejected move: {:?} is not a neighbor of {:?}",
-            target, current_pos
-        );
+    let Some((unit_entity, _, unit_pos, unit_owner)) =
+        units.iter().find(|(_, unit, _, _)| unit.id == unit_id)
+    else {
         return;
-    }
+    };
+
+    let Ok(player) = players.get(*player_entity) else {
+        return;
+    };
+
+    //make sure player has right to control this unit
+    if unit_owner.player_id != player.player_id {
+        return;
+    };
+
+    //make sure movement is correct
+    if !unit_pos.is_neighbor(&target) {
+        return;
+    };
     if !target.in_bounds(GRID_RADIUS) {
-        println!("Rejected move: {:?} is out of bounds", target);
+        println!("Rejected move: {target:?} is out of bounds");
         return;
     }
 
-    pending_moves.moves.insert(player_entity, target);
-    println!(
-        "Move accepted: player {player_entity} -> {:?} ({}/?)",
-        target,
-        pending_moves.moves.len()
-    );
+    println!("Accepting valid movement of unit {unit_id} to pos {target:?}");
+    //add the correct component MoveTo. Overwrites previous by default
+    commands.entity(unit_entity).insert(MoveTo { pos: target });
 }
 
 pub fn resolve_turn(
-    mut pending_moves: ResMut<PendingMoves>,
     players: Query<Entity, With<Player>>,
-    mut positions: Query<&mut HexPosition, With<Player>>,
+    mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
+    mut commands: Commands,
     mut turn_state: Query<&mut TurnState>,
     mut player_state: ResMut<PlayerState>,
 ) {
@@ -142,10 +147,9 @@ pub fn resolve_turn(
     }
 
     // Apply all moves simultaneously
-    for (entity, target) in pending_moves.moves.drain() {
-        if let Ok(mut pos) = positions.get_mut(entity) {
-            *pos = target;
-        }
+    for (entity, move_to, mut pos) in &mut units {
+        *pos = move_to.pos;
+        commands.entity(entity).remove::<MoveTo>();
     }
 
     // Advance turn

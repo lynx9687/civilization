@@ -1,7 +1,8 @@
-use bevy::{prelude::*};
+use bevy::prelude::*;
 use shared::{
     components::*,
-    hex::{HexPosition, hex_to_pixel}, units::*,
+    hex::{HexPosition, hex_to_pixel},
+    units::*,
 };
 
 use crate::HEX_SIZE;
@@ -44,24 +45,6 @@ pub fn spawn_hex_visuals(
     }
 }
 
-pub fn spawn_player_visuals(
-    players: Query<(Entity, &Player, &HexPosition), Added<Player>>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    for (entity, player, pos) in &players {
-        let pixel = hex_to_pixel(pos, HEX_SIZE);
-        let color = player_color(player.color_index);
-        println!("Adding player: {entity}, at pixel {pixel}");
-        commands.entity(entity).insert((
-            Mesh2d(meshes.add(Rectangle::new(SQUARE_SIZE, SQUARE_SIZE))),
-            MeshMaterial2d(materials.add(color)),
-            Transform::from_xyz(pixel.x, pixel.y, 1.0),
-        ));
-    }
-}
-
 //adds mesh for spawned units
 pub fn spawn_unit_visuals(
     units: Query<(Entity, &ColorIndex, &HexPosition), Added<Unit>>,
@@ -81,11 +64,10 @@ pub fn spawn_unit_visuals(
     }
 }
 
-#[allow(clippy::type_complexity)]
-pub fn update_player_positions(
-    mut players: Query<(&HexPosition, &mut Transform), (With<Player>, Changed<HexPosition>)>,
+pub fn update_uni_positions(
+    mut units: Query<(&HexPosition, &mut Transform), (With<Unit>, Changed<HexPosition>)>,
 ) {
-    for (pos, mut transform) in &mut players {
+    for (pos, mut transform) in &mut units {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
         transform.translation.x = pixel.x;
         transform.translation.y = pixel.y;

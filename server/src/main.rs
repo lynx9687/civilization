@@ -13,11 +13,7 @@ use bevy_replicon_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::{
-    components::*,
-    hex::generate_grid,
-    plugin::SharedPlugin, units::UnitCounter,
-};
+use shared::{components::*, hex::generate_grid, plugin::SharedPlugin, units::UnitCounter};
 
 use players::*;
 use turn::*;
@@ -108,12 +104,10 @@ fn spawn_grid(mut commands: Commands) {
         commands.spawn((Replicated, HexTile, pos));
     }
 
-    commands.spawn((
-        TurnState {
-            phase: TurnPhase::WaitingForPlayers,
-            turn_number: 0,
-        },
-    ));
+    commands.spawn((TurnState {
+        phase: TurnPhase::WaitingForPlayers,
+        turn_number: 0,
+    },));
 
     println!(
         "Spawned grid with radius {GRID_RADIUS} ({} tiles)",

@@ -2,16 +2,16 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::{components::*, hex::HexPosition, units::*};
-use shared::events::*;
 use rand::Rng;
+use shared::events::*;
+use shared::{components::*, hex::HexPosition, units::*};
 
 use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
 #[derive(Resource, Default)]
 pub struct PlayerMap {
-    pub client_to_player: HashMap<Entity, Entity>
+    pub client_to_player: HashMap<Entity, Entity>,
 }
 
 /// Tracks next color index to assign.
@@ -51,19 +51,30 @@ pub fn handle_new_clients(
         let color_index = color_counter.next();
         let player_id = player_counter.next();
         let player_entity = commands
-            .spawn((Player {player_id, color_index }, HexPosition::new(0, 0)))
+            .spawn((
+                Player {
+                    player_id,
+                    color_index,
+                },
+                HexPosition::new(0, 0),
+            ))
             .id();
 
         player_map
             .client_to_player
             .insert(client_entity, player_entity);
 
-        player_state.turn.insert(client_entity, crate::turn::PlayerTurnState::InProgress);
+        player_state
+            .turn
+            .insert(client_entity, crate::turn::PlayerTurnState::InProgress);
 
         let client_id = ClientId::Client(client_entity);
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(client_id),
-            message: YourPlayer { player_id, color_index },
+            message: YourPlayer {
+                player_id,
+                color_index,
+            },
         });
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
@@ -72,7 +83,12 @@ pub fn handle_new_clients(
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands
-            .spawn((Unit{id: unit_id}, HexPosition::new(x, y), Owner{player_id}, ColorIndex(color_index)))
+            .spawn((
+                Unit { id: unit_id },
+                HexPosition::new(x, y),
+                Owner { player_id },
+                ColorIndex(color_index),
+            ))
             .id();
 
         println!("Spawned unit: {unit_entity}, for player: {player_entity}");
@@ -80,7 +96,12 @@ pub fn handle_new_clients(
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands
-            .spawn((Unit{id: unit_id}, HexPosition::new(x, y), Owner{player_id}, ColorIndex(color_index)))
+            .spawn((
+                Unit { id: unit_id },
+                HexPosition::new(x, y),
+                Owner { player_id },
+                ColorIndex(color_index),
+            ))
             .id();
 
         println!("Spawned unit: {unit_entity}, for player: {player_entity}");

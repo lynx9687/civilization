@@ -28,26 +28,26 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             ..default()
         },
     ));
-    commands.spawn((
-        FinishTurnButton,
-        Button,
-        Node {
-            width: Val::Px(150.0),
-            height: Val::Px(100.0),
-            border: UiRect::all(Val::Px(5.0)),
-            justify_content: JustifyContent::Center,
-            border_radius: BorderRadius::MAX,
-            position_type: PositionType::Absolute,
-            align_items: AlignItems::Center,
-            right: Val::Px(10.0),
-            bottom: Val::Px(10.0),
-            ..Default::default()
-        },
-        BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-        BackgroundColor(Color::BLACK),
-    )).with_child((
-        Text::new("Finish Turn"),
-    ));
+    commands
+        .spawn((
+            FinishTurnButton,
+            Button,
+            Node {
+                width: Val::Px(150.0),
+                height: Val::Px(100.0),
+                border: UiRect::all(Val::Px(5.0)),
+                justify_content: JustifyContent::Center,
+                border_radius: BorderRadius::MAX,
+                position_type: PositionType::Absolute,
+                align_items: AlignItems::Center,
+                right: Val::Px(10.0),
+                bottom: Val::Px(10.0),
+                ..Default::default()
+            },
+            BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
+            BackgroundColor(Color::BLACK),
+        ))
+        .with_child((Text::new("Finish Turn"),));
 }
 
 pub fn finish_turn_clicked(
