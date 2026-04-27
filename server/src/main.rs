@@ -16,7 +16,7 @@ use bevy_replicon_renet::{
 use shared::{
     components::*,
     hex::generate_grid,
-    plugin::SharedPlugin,
+    plugin::SharedPlugin, units::UnitCounter,
 };
 
 use players::*;
@@ -49,6 +49,8 @@ fn main() {
         .insert_resource(BindAddr(addr))
         .init_resource::<PlayerMap>()
         .init_resource::<ColorCounter>()
+        .init_resource::<PlayerCounter>()
+        .init_resource::<UnitCounter>()
         .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))

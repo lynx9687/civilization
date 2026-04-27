@@ -4,7 +4,7 @@ use shared::components::*;
 use shared::events::FinishTurn;
 
 use crate::LocalPlayerColor;
-use crate::input::LastSubmittedTurn;
+use crate::input::{Controller, LastSubmittedTurn};
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -56,6 +56,7 @@ pub fn finish_turn_clicked(
     buttons: Query<(), With<FinishTurnButton>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
+    mut controller: ResMut<Controller>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -63,6 +64,7 @@ pub fn finish_turn_clicked(
     if buttons.contains(click.entity) {
         commands.client_trigger(FinishTurn);
         last_submitted.0 = Some(state.turn_number);
+        controller.selected_unit = None;
     }
 }
 

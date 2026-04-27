@@ -8,3 +8,4 @@ bevy.workspace = true
 bevy_replicon.workspace = true
 bevy_replicon_renet.workspace = true
 shared = { path = "../shared" }
+rand = "0.8"

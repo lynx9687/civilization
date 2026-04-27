@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::{
-    components::*,
-    hex::{HexPosition, pixel_to_hex},
-    events::*,
+    components::*, events::*, hex::{HexPosition, pixel_to_hex}, units::*
 };
 
 use crate::HEX_SIZE;
@@ -17,6 +15,14 @@ pub struct LastSubmittedTurn(pub Option<u32>);
 /// Tracks the currently hovered hex for highlighting.
 #[derive(Resource, Default)]
 pub struct HoveredHex(Option<HexPosition>);
+
+/// Trakcks the currently selected unit
+/// and other information related to controling game
+#[derive(Resource, Default)]
+pub struct Controller {
+    pub player_id: Option<u32>,
+    pub selected_unit: Option<Entity>,
+}
 
 fn get_cursor_hex(
     windows: &Query<&Window>,
@@ -40,25 +46,16 @@ pub fn update_hex_highlights(
     players: Query<(&Player, &HexPosition), Without<HexTile>>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
+    controller: ResMut<Controller>,
+    units: Query<&HexPosition, With<Unit>>
 ) {
     let cursor_hex = get_cursor_hex(&windows, &cameras);
     hovered.0 = cursor_hex;
 
-    let valid_moves: Vec<HexPosition> = if let Some(ref local) = local_color {
-        let can_move = turn_state
-            .single()
-            .is_ok_and(|s| s.phase == TurnPhase::Accepting)
-            && !last_submitted
-                .0
-                .is_some_and(|t| turn_state.single().is_ok_and(|s| t >= s.turn_number));
-
-        if can_move {
-            players
-                .iter()
-                .find(|(p, _)| p.color_index == local.0)
-                .map(|(_, pos)| pos.neighbors())
-                .unwrap_or_default()
-        } else {
+    let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit {
+        if let Ok(pos) = units.get(selected_unit) {
+            pos.neighbors()
+        } else{
             Vec::new()
         }
     } else {
@@ -74,6 +71,54 @@ pub fn update_hex_highlights(
             *material = MeshMaterial2d(hex_materials.default.clone());
         }
     }
+}
+
+pub fn handle_left_click (
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+    mut controller: ResMut<Controller>,
+    units: Query<(Entity, &Owner, &HexPosition), With<Unit>>
+) {
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    //check whether turn is active
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
+
+    let Some(target) = get_cursor_hex(&windows, &cameras) else {
+        return;
+    };
+
+    let Some(player_id) = controller.player_id else {
+        return;
+    };
+
+    println!("Target {target:?}");
+    println!("Player entity {player_id}");
+    // select clicked unit
+    for (unit_entity, owner, pos) in units {
+        let x = owner.player_id;
+        println!("Unit {unit_entity} with owner {x} at position {pos:?}");
+        if owner.player_id == player_id && *pos == target {
+            controller.selected_unit = Some(unit_entity);
+            println!("Selected unit {unit_entity}");
+            return;
+        }
+    }
+    controller.selected_unit = None;
+    println!("Deselected unit");
 }
 
 #[allow(clippy::too_many_arguments)]

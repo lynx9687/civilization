@@ -8,7 +8,9 @@ pub struct HexTile;
 
 /// Player identity — color_index is unique per player, assigned by server.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
+#[require(Replicated)]
 pub struct Player {
+    pub player_id: u32,
     pub color_index: u8,
 }
 

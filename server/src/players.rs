@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::{components::*, hex::HexPosition, units::*};
 use shared::events::*;
+use rand::Rng;
 
 use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
 
@@ -25,17 +26,32 @@ impl ColorCounter {
     }
 }
 
+/// Assigns unique ids to players
+#[derive(Resource, Default)]
+pub struct PlayerCounter(u32);
+
+impl PlayerCounter {
+    pub fn next(&mut self) -> u32 {
+        let res = self.0;
+        self.0 += 1;
+        res
+    }
+}
+
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
     mut player_map: ResMut<PlayerMap>,
     mut color_counter: ResMut<ColorCounter>,
+    mut player_counter: ResMut<PlayerCounter>,
+    mut unit_counter: ResMut<UnitCounter>,
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in &new_clients {
         let color_index = color_counter.next();
+        let player_id = player_counter.next();
         let player_entity = commands
-            .spawn((Replicated, Player { color_index }, HexPosition::new(0, 0)))
+            .spawn((Player {player_id, color_index }, HexPosition::new(0, 0)))
             .id();
 
         player_map
@@ -47,13 +63,24 @@ pub fn handle_new_clients(
         let client_id = ClientId::Client(client_entity);
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(client_id),
-            message: YourPlayer { color_index },
+            message: YourPlayer { player_id, color_index },
         });
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
+        let unit_id = unit_counter.next();
+        let x = rand::thread_rng().gen_range(-2..=2);
+        let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands
-            .spawn((Replicated, Unit, HexPosition::new(1, 1), Owner(player_entity), ColorIndex(color_index)))
+            .spawn((Unit{id: unit_id}, HexPosition::new(x, y), Owner{player_id}, ColorIndex(color_index)))
+            .id();
+
+        println!("Spawned unit: {unit_entity}, for player: {player_entity}");
+        let unit_id = unit_counter.next();
+        let x = rand::thread_rng().gen_range(-2..=2);
+        let y = rand::thread_rng().gen_range(-2..=2);
+        let unit_entity = commands
+            .spawn((Unit{id: unit_id}, HexPosition::new(x, y), Owner{player_id}, ColorIndex(color_index)))
             .id();
 
         println!("Spawned unit: {unit_entity}, for player: {player_entity}");

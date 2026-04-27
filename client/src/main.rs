@@ -14,7 +14,7 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{events::*, plugin::SharedPlugin};
+use shared::{components::Player, events::*, plugin::SharedPlugin};
 
 use input::*;
 use ui::*;
@@ -48,6 +48,7 @@ fn main() {
         .insert_resource(ServerAddr(addr))
         .init_resource::<LastSubmittedTurn>()
         .init_resource::<HoveredHex>()
+        .init_resource::<Controller>()
         .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
         .add_observer(finish_turn_clicked)
@@ -60,6 +61,7 @@ fn main() {
                 update_player_positions,
                 update_hex_highlights,
                 handle_input,
+                handle_left_click,
                 reset_submission_on_new_turn,
                 update_turn_ui,
             ),
@@ -99,8 +101,16 @@ fn connect_to_server(
     Ok(())
 }
 
-fn on_your_player(trigger: On<YourPlayer>, mut commands: Commands) {
+fn on_your_player(
+    trigger: On<YourPlayer>, 
+    mut commands: Commands, 
+    mut controller: ResMut<Controller>,
+    players: Query<(Entity, &Player)>, 
+) {
     let color_index = trigger.color_index;
     commands.insert_resource(LocalPlayerColor(color_index));
     println!("Assigned player color index: {color_index}");
+    let player_id = trigger.player_id;
+    println!("Received player_id: {player_id}");
+    controller.player_id = Some(player_id);
 }
