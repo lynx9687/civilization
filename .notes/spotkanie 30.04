@@ -1,0 +1,89 @@
+1.Dyskusja na temat zaproponowanych zasad gry itp
+    Czy chcemy dodać boty i możliwość gry singleplayer? Hotseat lokalnie?
+
+    Wnioski:
+    Tylko multi. Jak da się szybko dodać hotseat lokalny szybko to spoko.
+
+2.Setting/styl graficzny
+    Ma być 2d czy 3d? Jaka epoka? 
+    Low poly czy pixelart? 
+    A może AI ma udawać że to jest rysowane?
+
+    Konkluzja:
+    grafika 2D. 
+    Średniowiecze / fantasy
+
+3. Sieć / deployowanie / itch.io / serwer / dystrybucja
+    Czy chcemy jakiś serwer hostować?
+    Czy ma to być do pobrania na przykład z itch.io ?
+    Ewentulanie do pobrania ze stronki hostowanej przez nas?
+    Github actions z tym związane.
+    Instalator na Linux / Windows / MacOS ???
+
+    Generalnie trzeba przerobić klienta tak aby było GUI
+    do łączenia się.
+    Serwer powinien działać ciągle i odpalać instancję gry
+    na życzenie klienta. 
+    Gdyby to robić na serio to pewnie powinien być oddzileny
+    serwer do lobby i oddzielne serwery do hostowania gry.
+    Czy jeden serwer może odpalać więcej niż jedną 
+    rozgrywkę na raz? Komunikaty że serwer jest zajęty.
+    Znajdowanie serwera.
+
+4. AI 
+    Co robimy z tym speciem, który wygenerował Oleksandr?
+    Agents.md jeśli chcemy korzystać z LLMów
+    Wspólne ustalenia co robimy a czego nie.
+
+5. Testy / code review
+    Czy chcemy mieć unit testy / integration testy?
+    Odpowiednia konfiguracja githuba
+
+    Konkluzja:
+    - może cyfrowy przyjaciel zrobi code review
+
+6. Architektura programu, bevy, replicon
+    Pliki konfiguracyjne do jednostek / rodzajów terenu / kosztów produkcji itp
+
+7. Podział tasków:
+    - Deployment, architektura sieciowa, CI/CD itp
+    - Menu startowe (pewnie razem z punktem poprzednim)
+    - Logika gry. W tym:
+        - walka
+        - gospodarka
+        - miasta
+        - generowanie mapy
+    - Grafika i animacje
+    - Interfejs użytkownika (byle jaka wersja musi nadążać za logiką gry. Ładne może być później)
+    - Efekty dźwiękowe (Pezar pewnie już zapomniał XD)
+
+
+    - Testowanie, balans i wymyślanie rzeczy (pewnie więcej niż jedna osoba)
+    - boty (Opcjonalnie)
+
+8. Organizacja pracy
+    Kiedy kto będzie zwykle coś pisał ?
+    Kto gada z Pezarem i prezentuje progres (który tym razem już na 10000% będzie. Prawda Kacper?????)
+    Jak się komunikujemy?
+    Co ma być na najbliższe spotkanie?
+
+    
+Zrobić szybko:
+- Interfejs
+- Dodać miasta
+- Dodać walkę (na razie wręcz)
+
+
+
+Podział tasków na najbliższe zajęcia
+    Interfejs - Michał Mańka
+    Konfiguracja serwera - Mateusz Gabzdyl
+    Miasta i produkcja - Kacper Paciorek
+    Jednostki i Walka - Oleksandr
+
+
+Kiedy ludzie zwykle piszą:
+Michał - kiepska pogoda
+Kacper - środa i sobota
+Mateusz - środa, piątek i sobota
+Oleksandr - wtorki, piątki i weekendy
