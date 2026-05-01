@@ -57,4 +57,21 @@ mod tests {
         assert_eq!(def.terrain_cost.get("grassland"), Some(&1));
         assert_eq!(def.terrain_cost.get("mountain"), Some(&99999));
     }
+
+    #[test]
+    fn test_all_shipped_unit_files_parse() {
+        let unit_files = [
+            ("warrior", "../assets/units/warrior.ron"),
+            ("archer", "../assets/units/archer.ron"),
+            ("cavalry", "../assets/units/cavalry.ron"),
+            ("knight", "../assets/units/knight.ron"),
+            ("settler", "../assets/units/settler.ron"),
+        ];
+        for (name, path) in unit_files {
+            let contents = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
+            let _def: UnitDefinition = ron::from_str(&contents)
+                .unwrap_or_else(|e| panic!("failed to parse {name}: {e}"));
+        }
+    }
 }
