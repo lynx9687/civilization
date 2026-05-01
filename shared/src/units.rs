@@ -26,7 +26,7 @@ pub struct Unit {
 pub struct UnitCounter(u32);
 
 impl UnitCounter {
-    pub fn next(&mut self) -> u32 {
+    pub fn next_id(&mut self) -> u32 {
         let res = self.0;
         self.0 += 1;
         res

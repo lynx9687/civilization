@@ -19,7 +19,7 @@ pub struct PlayerMap {
 pub struct ColorCounter(u8);
 
 impl ColorCounter {
-    pub fn next(&mut self) -> u8 {
+    pub fn next_index(&mut self) -> u8 {
         let idx = self.0;
         self.0 = (self.0 + 1) % 8;
         idx
@@ -31,7 +31,7 @@ impl ColorCounter {
 pub struct PlayerCounter(u32);
 
 impl PlayerCounter {
-    pub fn next(&mut self) -> u32 {
+    pub fn next_id(&mut self) -> u32 {
         let res = self.0;
         self.0 += 1;
         res
@@ -48,8 +48,8 @@ pub fn handle_new_clients(
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in &new_clients {
-        let color_index = color_counter.next();
-        let player_id = player_counter.next();
+        let color_index = color_counter.next_index();
+        let player_id = player_counter.next_id();
         let player_entity = commands
             .spawn((
                 Player {
@@ -79,7 +79,7 @@ pub fn handle_new_clients(
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
-        let unit_id = unit_counter.next();
+        let unit_id = unit_counter.next_id();
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands
@@ -92,7 +92,7 @@ pub fn handle_new_clients(
             .id();
 
         println!("Spawned unit: {unit_entity}, for player: {player_entity}");
-        let unit_id = unit_counter.next();
+        let unit_id = unit_counter.next_id();
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands

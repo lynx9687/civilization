@@ -1,3 +1,4 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::{
@@ -26,28 +27,29 @@ pub struct Controller {
     pub selected_unit: Option<Entity>,
 }
 
-fn get_cursor_hex(
-    windows: &Query<&Window>,
-    cameras: &Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-) -> Option<HexPosition> {
-    let window = windows.single().ok()?;
-    let (camera, transform) = cameras.single().ok()?;
+#[derive(SystemParam)]
+pub struct CursorWorld<'w, 's> {
+    windows: Query<'w, 's, &'static Window>,
+    cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera2d>>,
+}
+
+fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
+    let window = cursor.windows.single().ok()?;
+    let (camera, transform) = cursor.cameras.single().ok()?;
     let cursor_pos = window.cursor_position()?;
     let world_pos = camera.viewport_to_world_2d(transform, cursor_pos).ok()?;
     Some(pixel_to_hex(world_pos, HEX_SIZE))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_hex_highlights(
-    windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cursor: CursorWorld,
     mut tiles: Query<(&HexPosition, &mut MeshMaterial2d<ColorMaterial>), With<HexTile>>,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
     controller: ResMut<Controller>,
     units: Query<&HexPosition, With<Unit>>,
 ) {
-    let cursor_hex = get_cursor_hex(&windows, &cameras);
+    let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
     let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit {
@@ -73,8 +75,7 @@ pub fn update_hex_highlights(
 
 pub fn handle_left_click(
     mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cursor: CursorWorld,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
@@ -94,7 +95,7 @@ pub fn handle_left_click(
         return;
     }
 
-    let Some(target) = get_cursor_hex(&windows, &cameras) else {
+    let Some(target) = get_cursor_hex(&cursor) else {
         return;
     };
 
@@ -121,8 +122,7 @@ pub fn handle_left_click(
 pub fn handle_right_click(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    cursor: CursorWorld,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
@@ -142,7 +142,7 @@ pub fn handle_right_click(
         return;
     }
 
-    let Some(target) = get_cursor_hex(&windows, &cameras) else {
+    let Some(target) = get_cursor_hex(&cursor) else {
         return;
     };
 
