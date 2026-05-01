@@ -23,7 +23,71 @@ impl UnitRegistry {
     pub fn get(&self, name: &str) -> Option<&UnitDefinition> {
         self.definitions.get(name)
     }
+
+    pub fn load_from_dir(dir: &std::path::Path) -> Result<Self, LoadError> {
+        let mut definitions = HashMap::new();
+        let entries = std::fs::read_dir(dir).map_err(|e| LoadError::Io {
+            path: dir.to_path_buf(),
+            source: e,
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|e| LoadError::Io {
+                path: dir.to_path_buf(),
+                source: e,
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("ron") {
+                continue;
+            }
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| LoadError::BadFileName { path: path.clone() })?
+                .to_string();
+            let contents = std::fs::read_to_string(&path).map_err(|e| LoadError::Io {
+                path: path.clone(),
+                source: e,
+            })?;
+            let def: UnitDefinition = ron::from_str(&contents).map_err(|e| LoadError::Parse {
+                path: path.clone(),
+                source: e,
+            })?;
+            definitions.insert(name, def);
+        }
+        Ok(UnitRegistry { definitions })
+    }
 }
+
+#[derive(Debug)]
+pub enum LoadError {
+    Io {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+    Parse {
+        path: std::path::PathBuf,
+        source: ron::error::SpannedError,
+    },
+    BadFileName {
+        path: std::path::PathBuf,
+    },
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Io { path, source } => {
+                write!(f, "io error reading {}: {source}", path.display())
+            }
+            LoadError::Parse { path, source } => {
+                write!(f, "parse error in {}: {source}", path.display())
+            }
+            LoadError::BadFileName { path } => write!(f, "bad file name: {}", path.display()),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
 
 #[cfg(test)]
 mod tests {
@@ -73,5 +137,21 @@ mod tests {
             let _def: UnitDefinition =
                 ron::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse {name}: {e}"));
         }
+    }
+
+    #[test]
+    fn test_registry_loads_all_definitions_from_dir() {
+        let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
+            .expect("should load");
+        assert!(registry.get("warrior").is_some());
+        assert!(registry.get("archer").is_some());
+        assert!(registry.get("cavalry").is_some());
+        assert!(registry.get("knight").is_some());
+        assert!(registry.get("settler").is_some());
+        assert_eq!(registry.definitions.len(), 5);
+
+        let warrior = registry.get("warrior").unwrap();
+        assert_eq!(warrior.hp, 10);
+        assert_eq!(warrior.move_budget, 2);
     }
 }
