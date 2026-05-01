@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::hex::HexPosition;
 
+#[derive(Component, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Health {
+    pub current: u32,
+    pub max: u32,
+}
+
+impl Health {
+    pub fn full(max: u32) -> Self {
+        Health { current: max, max }
+    }
+}
+
 // Tracks the player owning a unit
 // I'm not sure if this is the correct way to do it. Needs discussion - Kacper
 #[derive(Component, Serialize, Deserialize, Debug)]
@@ -36,4 +48,16 @@ impl UnitCounter {
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct MoveTo {
     pub pos: HexPosition,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_health_full_initializes_at_max() {
+        let h = Health::full(10);
+        assert_eq!(h.current, 10);
+        assert_eq!(h.max, 10);
+    }
 }
