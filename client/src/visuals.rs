@@ -65,7 +65,7 @@ pub fn spawn_unit_visuals(
     }
 }
 
-pub fn update_uni_positions(
+pub fn update_unit_positions(
     time: Res<Time>,
     mut units: Query<(&HexPosition, &mut Transform), With<Unit>>,
 ) {
