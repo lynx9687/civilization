@@ -1,6 +1,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use shared::unit_definition::{UnitRegistry, is_within_move_range};
 use shared::{
     components::*,
     events::*,
@@ -41,23 +42,29 @@ fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
     Some(pixel_to_hex(world_pos, HEX_SIZE))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_hex_highlights(
     cursor: CursorWorld,
     mut tiles: Query<(&HexPosition, &mut MeshMaterial2d<ColorMaterial>), With<HexTile>>,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
     controller: ResMut<Controller>,
-    units: Query<&HexPosition, With<Unit>>,
+    units: Query<(&Unit, &HexPosition)>,
+    registry: Res<UnitRegistry>,
+    all_tiles: Query<&HexPosition, With<HexTile>>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
-    let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit {
-        if let Ok(pos) = units.get(selected_unit) {
-            pos.neighbors()
-        } else {
-            Vec::new()
-        }
+    let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit
+        && let Ok((unit, pos)) = units.get(selected_unit)
+        && let Some(def) = registry.get(&unit.type_name)
+    {
+        all_tiles
+            .iter()
+            .filter(|tile_pos| is_within_move_range(pos, tile_pos, def.move_budget))
+            .copied()
+            .collect()
     } else {
         Vec::new()
     };
@@ -119,6 +126,7 @@ pub fn handle_left_click(
     println!("Deselected unit");
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_right_click(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -127,6 +135,7 @@ pub fn handle_right_click(
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
     units: Query<(&HexPosition, &Unit)>,
+    registry: Res<UnitRegistry>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
@@ -155,7 +164,11 @@ pub fn handle_right_click(
         return;
     };
 
-    if target.is_neighbor(unit_pos) {
+    let Some(def) = registry.get(&unit.type_name) else {
+        return;
+    };
+
+    if is_within_move_range(unit_pos, &target, def.move_budget) {
         commands.client_trigger(MoveAction {
             unit_id: unit.id,
             target,

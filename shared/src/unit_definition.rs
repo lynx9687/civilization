@@ -89,6 +89,15 @@ impl std::fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
+pub fn is_within_move_range(
+    from: &crate::hex::HexPosition,
+    to: &crate::hex::HexPosition,
+    move_budget: u32,
+) -> bool {
+    let d = from.distance(to);
+    d > 0 && (d as u32) <= move_budget
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +162,18 @@ mod tests {
         let warrior = registry.get("warrior").unwrap();
         assert_eq!(warrior.hp, 10);
         assert_eq!(warrior.move_budget, 2);
+    }
+
+    #[test]
+    fn test_is_within_move_range_respects_budget() {
+        use crate::hex::HexPosition;
+
+        let from = HexPosition::new(0, 0);
+        let close = HexPosition::new(2, 0);
+        let far = HexPosition::new(5, 0);
+
+        assert!(is_within_move_range(&from, &close, 2)); // distance 2, budget 2 → ok
+        assert!(!is_within_move_range(&from, &far, 2)); // distance 5, budget 2 → out
+        assert!(!is_within_move_range(&from, &from, 2)); // same hex → out (no-op move)
     }
 }
