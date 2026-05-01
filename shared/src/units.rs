@@ -27,10 +27,11 @@ pub struct Owner {
 pub struct ColorIndex(pub u8);
 
 // Entity for units such as warrior/settler
-#[derive(Component, Serialize, Deserialize, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
 #[require(Replicated, HexPosition)] //intuitively we want every unit to have an owner but Entity doesn't have default
 pub struct Unit {
     pub id: u32,
+    pub type_name: String,
 }
 
 /// Assigns unique ids to players

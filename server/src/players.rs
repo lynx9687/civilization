@@ -84,7 +84,10 @@ pub fn handle_new_clients(
         let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands
             .spawn((
-                Unit { id: unit_id },
+                Unit {
+                    id: unit_id,
+                    type_name: "warrior".to_string(),
+                },
                 HexPosition::new(x, y),
                 Owner { player_id },
                 ColorIndex(color_index),
@@ -97,7 +100,10 @@ pub fn handle_new_clients(
         let y = rand::thread_rng().gen_range(-2..=2);
         let unit_entity = commands
             .spawn((
-                Unit { id: unit_id },
+                Unit {
+                    id: unit_id,
+                    type_name: "warrior".to_string(),
+                },
                 HexPosition::new(x, y),
                 Owner { player_id },
                 ColorIndex(color_index),
