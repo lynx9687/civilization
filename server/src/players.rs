@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use rand::Rng;
 use shared::events::*;
+use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
 use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
@@ -38,6 +39,7 @@ impl PlayerCounter {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
@@ -45,6 +47,7 @@ pub fn handle_new_clients(
     mut color_counter: ResMut<ColorCounter>,
     mut player_counter: ResMut<PlayerCounter>,
     mut unit_counter: ResMut<UnitCounter>,
+    registry: Res<UnitRegistry>,
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in &new_clients {
@@ -79,38 +82,31 @@ pub fn handle_new_clients(
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
-        let unit_id = unit_counter.next_id();
-        let x = rand::thread_rng().gen_range(-2..=2);
-        let y = rand::thread_rng().gen_range(-2..=2);
-        let unit_entity = commands
-            .spawn((
-                Unit {
-                    id: unit_id,
-                    type_name: "warrior".to_string(),
-                },
-                HexPosition::new(x, y),
-                Owner { player_id },
-                ColorIndex(color_index),
-            ))
-            .id();
-
-        println!("Spawned unit: {unit_entity}, for player: {player_entity}");
-        let unit_id = unit_counter.next_id();
-        let x = rand::thread_rng().gen_range(-2..=2);
-        let y = rand::thread_rng().gen_range(-2..=2);
-        let unit_entity = commands
-            .spawn((
-                Unit {
-                    id: unit_id,
-                    type_name: "warrior".to_string(),
-                },
-                HexPosition::new(x, y),
-                Owner { player_id },
-                ColorIndex(color_index),
-            ))
-            .id();
-
-        println!("Spawned unit: {unit_entity}, for player: {player_entity}");
+        let starting_units = ["warrior", "settler"];
+        for unit_type in starting_units {
+            let definition = registry
+                .get(unit_type)
+                .unwrap_or_else(|| panic!("missing unit definition for {unit_type}"));
+            let unit_id = unit_counter.next_id();
+            let x = rand::thread_rng().gen_range(-2..=2);
+            let y = rand::thread_rng().gen_range(-2..=2);
+            let unit_entity = commands
+                .spawn((
+                    Unit {
+                        id: unit_id,
+                        type_name: unit_type.to_string(),
+                    },
+                    HexPosition::new(x, y),
+                    Owner { player_id },
+                    ColorIndex(color_index),
+                    Health::full(definition.hp),
+                ))
+                .id();
+            println!(
+                "Spawned {unit_type}: {unit_entity} (HP {}) for player: {player_entity}",
+                definition.hp
+            );
+        }
     }
 }
 
