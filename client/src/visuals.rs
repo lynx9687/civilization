@@ -8,6 +8,7 @@ use shared::{
 use crate::HEX_SIZE;
 
 const SQUARE_SIZE: f32 = 20.0;
+const UNIT_MOVE_SPEED: f32 = 300.0;
 
 /// Handles to shared hex materials for highlighting.
 #[derive(Resource)]
@@ -65,11 +66,23 @@ pub fn spawn_unit_visuals(
 }
 
 pub fn update_uni_positions(
-    mut units: Query<(&HexPosition, &mut Transform), (With<Unit>, Changed<HexPosition>)>,
+    time: Res<Time>,
+    mut units: Query<(&HexPosition, &mut Transform), With<Unit>>,
 ) {
     for (pos, mut transform) in &mut units {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
-        transform.translation.x = pixel.x;
-        transform.translation.y = pixel.y;
+        let current = transform.translation.truncate();
+        let delta = pixel - current;
+        let distance = delta.length();
+        let max_step = UNIT_MOVE_SPEED * time.delta_secs();
+
+        if distance <= max_step {
+            transform.translation.x = pixel.x;
+            transform.translation.y = pixel.y;
+        } else {
+            let step = delta / distance * max_step;
+            transform.translation.x += step.x;
+            transform.translation.y += step.y;
+        }
     }
 }
