@@ -70,8 +70,8 @@ mod tests {
         for (name, path) in unit_files {
             let contents = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
-            let _def: UnitDefinition = ron::from_str(&contents)
-                .unwrap_or_else(|e| panic!("failed to parse {name}: {e}"));
+            let _def: UnitDefinition =
+                ron::from_str(&contents).unwrap_or_else(|e| panic!("failed to parse {name}: {e}"));
         }
     }
 }
