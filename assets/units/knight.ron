@@ -1,0 +1,15 @@
+(
+    hp: 14,
+    move_budget: 2,
+    attack_range: 1,
+    attack_damage: 6,
+    gold_upkeep: 3,
+    production_cost: 50,
+    build_targets: [],
+    terrain_cost: {
+        "grassland": 1,
+        "hill": 2,
+        "forest": 2,
+        "mountain": 99999,
+    },
+)

@@ -5,9 +5,9 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use rand::Rng;
 use shared::events::*;
+use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
-use crate::GRID_RADIUS;
 use crate::cities::{CityCounter, spawn_city_at_tile};
 use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
 
@@ -51,9 +51,11 @@ pub struct NewPlayerSetup<'w> {
     player_state: ResMut<'w, PlayerState>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
+    registry: Res<UnitRegistry>,
     mut setup: NewPlayerSetup,
 ) {
     for client_entity in &new_clients {
@@ -91,6 +93,35 @@ pub fn handle_new_clients(
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
+        let starting_units = ["warrior", "settler"];
+        for unit_type in starting_units {
+            let type_id = registry
+                .id_of(unit_type)
+                .unwrap_or_else(|| panic!("missing unit definition for {unit_type}"));
+            let definition = registry
+                .get(&type_id)
+                .unwrap_or_else(|| panic!("registry has id but no definition for {unit_type}"));
+            let unit_id = setup.unit_counter.next_id();
+            let x = rand::thread_rng().gen_range(-2..=2);
+            let y = rand::thread_rng().gen_range(-2..=2);
+            let unit_entity = commands
+                .spawn((
+                    Unit {
+                        id: unit_id,
+                        type_id,
+                    },
+                    HexPosition::new(x, y),
+                    Owner { player_id },
+                    ColorIndex(color_index),
+                    Health::full(definition.hp),
+                ))
+                .id();
+            println!(
+                "Spawned {unit_type}: {unit_entity} (HP {}) for player: {player_entity}",
+                definition.hp
+            );
+        }
+
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
         let start_pos = HexPosition::new(x, y);
@@ -102,34 +133,6 @@ pub fn handle_new_clients(
             color_index,
         );
         println!("Spawned city: {city_entity}, for player: {player_entity}");
-
-        let unit_id = setup.unit_counter.next_id();
-        let unit_entity = commands
-            .spawn((
-                Unit { id: unit_id },
-                start_pos,
-                Owner { player_id },
-                ColorIndex(color_index),
-            ))
-            .id();
-
-        println!("Spawned unit: {unit_entity}, for player: {player_entity}");
-        let unit_id = setup.unit_counter.next_id();
-        let second_unit_pos = start_pos
-            .neighbors()
-            .into_iter()
-            .find(|pos| pos.in_bounds(GRID_RADIUS))
-            .unwrap_or(start_pos);
-        let unit_entity = commands
-            .spawn((
-                Unit { id: unit_id },
-                second_unit_pos,
-                Owner { player_id },
-                ColorIndex(color_index),
-            ))
-            .id();
-
-        println!("Spawned unit: {unit_entity}, for player: {player_entity}");
     }
 }
 

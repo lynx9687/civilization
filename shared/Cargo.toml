@@ -7,3 +7,4 @@ edition = "2024"
 bevy.workspace = true
 bevy_replicon.workspace = true
 serde.workspace = true
+ron.workspace = true
