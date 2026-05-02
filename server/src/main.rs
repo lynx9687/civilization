@@ -63,8 +63,8 @@ fn main() {
                 update_turn_phase,
                 apply_unit_moves,
                 grow_city_population_if_turn_ready,
-                claim_city_tiles,
-                recalculate_city_yields,
+                claim_city_tiles.run_if(any_pending_city_claims),
+                recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 grant_city_gold_if_turn_ready,
                 advance_turn,
             )

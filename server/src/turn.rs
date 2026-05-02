@@ -168,13 +168,14 @@ pub fn grow_city_population_if_turn_ready(
     players: Query<Entity, With<Player>>,
     turn_state: Query<&TurnState>,
     player_state: Res<PlayerState>,
-    cities: Query<&mut CityStats, With<City>>,
+    commands: Commands,
+    cities: Query<(Entity, &mut CityStats), With<City>>,
 ) {
     if !turn_resolution_ready(players, turn_state, player_state) {
         return;
     }
 
-    grow_city_population(cities);
+    grow_city_population(commands, cities);
 }
 
 /// Pays city gold income to players during turn resolution.

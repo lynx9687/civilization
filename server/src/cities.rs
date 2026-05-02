@@ -19,6 +19,10 @@ const MAX_BORDER_RANGE: i32 = 3;
 const POPULATION_PER_BORDER_RANGE: u32 = 3;
 const FOOD_GROWTH_MULTIPLIER: i32 = 5;
 
+/// Server-only marker for cities whose border claims need refreshing.
+#[derive(Component)]
+pub struct PendingTileClaim;
+
 /// Assigns unique ids to cities.
 #[derive(Resource, Default)]
 pub struct CityCounter(u32);
@@ -54,17 +58,33 @@ pub fn spawn_city_at_tile(
             pos,
             Owner { player_id },
             ColorIndex(color_index),
+            PendingTileClaim,
         ))
         .id()
+}
+
+pub fn any_pending_city_claims(cities: Query<(), With<PendingTileClaim>>) -> bool {
+    !cities.is_empty()
+}
+
+type ChangedTileOwners<'w, 's> = Query<'w, 's, (), Or<(Added<TileOwner>, Changed<TileOwner>)>>;
+type ChangedTileResources<'w, 's> =
+    Query<'w, 's, (), Or<(Added<TileResources>, Changed<TileResources>)>>;
+
+pub fn any_city_yields_need_recalculation(
+    owned_tiles: ChangedTileOwners,
+    resource_tiles: ChangedTileResources,
+) -> bool {
+    !owned_tiles.is_empty() || !resource_tiles.is_empty()
 }
 
 /// Claims every tile inside each city's current border range.
 pub fn claim_city_tiles(
     mut commands: Commands,
-    cities: Query<(&City, &Owner, &HexPosition, &CityStats), With<City>>,
+    cities: Query<(Entity, &City, &Owner, &HexPosition, &CityStats), With<PendingTileClaim>>,
     tiles: Query<(Entity, &HexPosition, Option<&TileOwner>), With<HexTile>>,
 ) {
-    for (city, owner, city_pos, stats) in &cities {
+    for (city_entity, city, owner, city_pos, stats) in &cities {
         for (tile_entity, tile_pos, tile_owner) in &tiles {
             if tile_owner.is_some_and(|tile_owner| tile_owner.city_id != city.id) {
                 continue;
@@ -77,6 +97,8 @@ pub fn claim_city_tiles(
                 });
             }
         }
+
+        commands.entity(city_entity).remove::<PendingTileClaim>();
     }
 }
 
@@ -111,8 +133,11 @@ pub fn recalculate_city_yields(
 }
 
 /// Applies stored food income and expands borders after population growth.
-pub fn grow_city_population(mut cities: Query<&mut CityStats, With<City>>) {
-    for mut stats in &mut cities {
+pub fn grow_city_population(
+    mut commands: Commands,
+    mut cities: Query<(Entity, &mut CityStats), With<City>>,
+) {
+    for (city_entity, mut stats) in &mut cities {
         stats.food += stats.food_per_turn;
 
         loop {
@@ -124,8 +149,12 @@ pub fn grow_city_population(mut cities: Query<&mut CityStats, With<City>>) {
             stats.food -= growth_threshold;
             stats.population += 1;
 
+            let old_border_range = stats.border_range;
             let border_range = 1 + ((stats.population - 1) / POPULATION_PER_BORDER_RANGE) as i32;
             stats.border_range = border_range.clamp(STARTING_BORDER_RANGE, MAX_BORDER_RANGE);
+            if stats.border_range != old_border_range {
+                commands.entity(city_entity).insert(PendingTileClaim);
+            }
         }
     }
 }
