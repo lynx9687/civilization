@@ -18,6 +18,7 @@ pub struct HexMaterials {
     pub default: Handle<ColorMaterial>,
     pub hovered: Handle<ColorMaterial>,
     pub valid_move: Handle<ColorMaterial>,
+    pub claimed: Vec<Handle<ColorMaterial>>,
 }
 
 pub fn setup_camera(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
@@ -27,6 +28,16 @@ pub fn setup_camera(mut commands: Commands, mut materials: ResMut<Assets<ColorMa
         default: materials.add(Color::srgb(0.15, 0.15, 0.2)),
         hovered: materials.add(Color::srgb(0.3, 0.3, 0.4)),
         valid_move: materials.add(Color::srgb(0.2, 0.4, 0.2)),
+        claimed: vec![
+            materials.add(Color::srgb(0.35, 0.12, 0.12)),
+            materials.add(Color::srgb(0.10, 0.16, 0.36)),
+            materials.add(Color::srgb(0.10, 0.30, 0.12)),
+            materials.add(Color::srgb(0.36, 0.32, 0.10)),
+            materials.add(Color::srgb(0.34, 0.12, 0.34)),
+            materials.add(Color::srgb(0.10, 0.32, 0.34)),
+            materials.add(Color::srgb(0.36, 0.22, 0.10)),
+            materials.add(Color::srgb(0.22, 0.12, 0.36)),
+        ],
     };
     commands.insert_resource(hex_materials);
 }

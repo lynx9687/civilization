@@ -2,9 +2,11 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::{
+    cities::City,
     components::*,
     events::*,
     hex::{HexPosition, pixel_to_hex},
+    tiles::TileOwner,
     units::*,
 };
 
@@ -25,6 +27,7 @@ pub struct HoveredHex(Option<HexPosition>);
 pub struct Controller {
     pub player_id: Option<u32>,
     pub selected_unit: Option<Entity>,
+    pub selected_city: Option<Entity>,
 }
 
 #[derive(SystemParam)]
@@ -32,6 +35,17 @@ pub struct CursorWorld<'w, 's> {
     windows: Query<'w, 's, &'static Window>,
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera2d>>,
 }
+
+type TileHighlightQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static HexPosition,
+        Option<&'static TileOwner>,
+        &'static mut MeshMaterial2d<ColorMaterial>,
+    ),
+    With<HexTile>,
+>;
 
 fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
     let window = cursor.windows.single().ok()?;
@@ -43,11 +57,12 @@ fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
 
 pub fn update_hex_highlights(
     cursor: CursorWorld,
-    mut tiles: Query<(&HexPosition, &mut MeshMaterial2d<ColorMaterial>), With<HexTile>>,
+    mut tiles: TileHighlightQuery,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
     controller: ResMut<Controller>,
     units: Query<&HexPosition, With<Unit>>,
+    players: Query<&Player>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
@@ -62,11 +77,17 @@ pub fn update_hex_highlights(
         Vec::new()
     };
 
-    for (pos, mut material) in &mut tiles {
+    for (pos, owner, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
             *material = MeshMaterial2d(hex_materials.hovered.clone());
         } else if valid_moves.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_move.clone());
+        } else if let Some(tile_owner) = owner {
+            let color_index = players
+                .iter()
+                .find(|player| player.player_id == tile_owner.player_id)
+                .map_or(0, |player| player.color_index);
+            *material = MeshMaterial2d(hex_materials.claimed[color_index as usize].clone());
         } else {
             *material = MeshMaterial2d(hex_materials.default.clone());
         }
@@ -80,18 +101,9 @@ pub fn handle_left_click(
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
     units: Query<(Entity, &Owner, &HexPosition), With<Unit>>,
+    cities: Query<(Entity, &HexPosition), With<City>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
-        return;
-    }
-    //check whether turn is active
-    let Ok(state) = turn_state.single() else {
-        return;
-    };
-    if state.phase != TurnPhase::Accepting {
-        return;
-    }
-    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
         return;
     }
 
@@ -105,18 +117,36 @@ pub fn handle_left_click(
 
     println!("Target {target:?}");
     println!("Player entity {player_id}");
-    // select clicked unit
-    for (unit_entity, owner, pos) in units {
-        let x = owner.player_id;
-        println!("Unit {unit_entity} with owner {x} at position {pos:?}");
-        if owner.player_id == player_id && *pos == target {
-            controller.selected_unit = Some(unit_entity);
-            println!("Selected unit {unit_entity}");
+
+    if let Ok(state) = turn_state.single()
+        && state.phase == TurnPhase::Accepting
+        && last_submitted.0.is_none_or(|t| t < state.turn_number)
+    {
+        // select clicked unit
+        for (unit_entity, owner, pos) in units {
+            let x = owner.player_id;
+            println!("Unit {unit_entity} with owner {x} at position {pos:?}");
+            if owner.player_id == player_id && *pos == target {
+                controller.selected_unit = Some(unit_entity);
+                controller.selected_city = None;
+                println!("Selected unit {unit_entity}");
+                return;
+            }
+        }
+    }
+
+    for (city_entity, pos) in cities {
+        if *pos == target {
+            controller.selected_unit = None;
+            controller.selected_city = Some(city_entity);
+            println!("Selected city {city_entity}");
             return;
         }
     }
+
     controller.selected_unit = None;
-    println!("Deselected unit");
+    controller.selected_city = None;
+    println!("Deselected unit/city");
 }
 
 pub fn handle_right_click(
