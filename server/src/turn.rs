@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use shared::unit_definition::{UnitRegistry, is_within_move_range};
 use shared::units::*;
 use shared::{components::*, events::*, hex::HexPosition};
 
@@ -80,6 +81,7 @@ pub fn handle_move(
     players: Query<&Player>,
     units: Query<(Entity, &Unit, &HexPosition, &Owner)>,
     turn_state: Query<&TurnState>,
+    registry: Res<UnitRegistry>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -98,7 +100,7 @@ pub fn handle_move(
         return;
     };
 
-    let Some((unit_entity, _, unit_pos, unit_owner)) =
+    let Some((unit_entity, unit, unit_pos, unit_owner)) =
         units.iter().find(|(_, unit, _, _)| unit.id == unit_id)
     else {
         return;
@@ -113,10 +115,21 @@ pub fn handle_move(
         return;
     };
 
-    //make sure movement is correct
-    if !unit_pos.is_neighbor(&target) {
+    //validate movement against the unit's move budget
+    let Some(definition) = registry.get(&unit.type_id) else {
+        println!(
+            "Rejected move: unknown unit type {:?} for unit {unit_id}",
+            unit.type_id
+        );
         return;
     };
+    if !is_within_move_range(unit_pos, &target, definition.move_budget) {
+        println!(
+            "Rejected move: unit {unit_id} cannot reach {target:?} from {unit_pos:?} (budget {})",
+            definition.move_budget
+        );
+        return;
+    }
     if !target.in_bounds(GRID_RADIUS) {
         println!("Rejected move: {target:?} is out of bounds");
         return;

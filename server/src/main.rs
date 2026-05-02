@@ -13,7 +13,10 @@ use bevy_replicon_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::{components::*, hex::generate_grid, plugin::SharedPlugin, units::UnitCounter};
+use shared::{
+    components::*, hex::generate_grid, plugin::SharedPlugin, unit_definition::UnitRegistry,
+    units::UnitCounter,
+};
 
 use players::*;
 use turn::*;
@@ -49,7 +52,10 @@ fn main() {
         .init_resource::<UnitCounter>()
         .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
-        .add_systems(Startup, (start_server, spawn_grid))
+        .add_systems(
+            Startup,
+            (load_unit_registry, start_server, spawn_grid).chain(),
+        )
         .add_observer(handle_move)
         .add_observer(handle_finish_turn)
         .add_systems(
@@ -113,4 +119,21 @@ fn spawn_grid(mut commands: Commands) {
         "Spawned grid with radius {GRID_RADIUS} ({} tiles)",
         3 * GRID_RADIUS * GRID_RADIUS + 3 * GRID_RADIUS + 1
     );
+}
+
+fn load_unit_registry(mut commands: Commands) {
+    let path = std::path::Path::new("assets/units");
+    match UnitRegistry::load_from_dir(path) {
+        Ok(registry) => {
+            println!(
+                "Loaded {} unit definitions from {}",
+                registry.definitions.len(),
+                path.display()
+            );
+            commands.insert_resource(registry);
+        }
+        Err(e) => {
+            panic!("Failed to load unit registry from {}: {e}", path.display());
+        }
+    }
 }
