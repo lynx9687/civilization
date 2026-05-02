@@ -2,10 +2,12 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use shared::cities::{City, CityStats};
 use shared::units::*;
 use shared::{components::*, events::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
+use crate::cities::{grant_city_gold, grow_city_population};
 use crate::players::PlayerMap;
 
 /// Collects submitted moves during the Accepting phase, then drains them all at once to resolve the turn.
@@ -127,10 +129,72 @@ pub fn handle_move(
     commands.entity(unit_entity).insert(MoveTo { pos: target });
 }
 
-pub fn resolve_turn(
+fn turn_resolution_ready(
+    players: Query<Entity, With<Player>>,
+    turn_state: Query<&TurnState>,
+    player_state: Res<PlayerState>,
+) -> bool {
+    let Ok(state) = turn_state.single() else {
+        return false;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return false;
+    }
+
+    let player_count = players.iter().count() as i32;
+    player_count >= 2 && player_state.finished_cnt >= player_count
+}
+
+/// Applies accepted unit movement orders once all players have finished the turn.
+pub fn apply_unit_moves(
     players: Query<Entity, With<Player>>,
     mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
     mut commands: Commands,
+    turn_state: Query<&TurnState>,
+    player_state: Res<PlayerState>,
+) {
+    if !turn_resolution_ready(players, turn_state, player_state) {
+        return;
+    }
+
+    for (entity, move_to, mut pos) in &mut units {
+        *pos = move_to.pos;
+        commands.entity(entity).remove::<MoveTo>();
+    }
+}
+
+/// Advances city food and population during turn resolution.
+pub fn grow_city_population_if_turn_ready(
+    players: Query<Entity, With<Player>>,
+    turn_state: Query<&TurnState>,
+    player_state: Res<PlayerState>,
+    cities: Query<&mut CityStats, With<City>>,
+) {
+    if !turn_resolution_ready(players, turn_state, player_state) {
+        return;
+    }
+
+    grow_city_population(cities);
+}
+
+/// Pays city gold income to players during turn resolution.
+pub fn grant_city_gold_if_turn_ready(
+    players_ready: Query<Entity, With<Player>>,
+    turn_state: Query<&TurnState>,
+    player_state: Res<PlayerState>,
+    cities: Query<(&Owner, &CityStats), With<City>>,
+    players: Query<&mut Player>,
+) {
+    if !turn_resolution_ready(players_ready, turn_state, player_state) {
+        return;
+    }
+
+    grant_city_gold(cities, players);
+}
+
+/// Finalizes turn resolution and opens the next turn for player input.
+pub fn advance_turn(
+    players: Query<Entity, With<Player>>,
     mut turn_state: Query<&mut TurnState>,
     mut player_state: ResMut<PlayerState>,
 ) {
@@ -146,13 +210,6 @@ pub fn resolve_turn(
         return;
     }
 
-    // Apply all moves simultaneously
-    for (entity, move_to, mut pos) in &mut units {
-        *pos = move_to.pos;
-        commands.entity(entity).remove::<MoveTo>();
-    }
-
-    // Advance turn
     let Ok(mut state) = turn_state.single_mut() else {
         return;
     };

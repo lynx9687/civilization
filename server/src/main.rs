@@ -1,3 +1,4 @@
+mod cities;
 mod players;
 mod turn;
 
@@ -15,6 +16,7 @@ use bevy_replicon_renet::{
 };
 use shared::{components::*, hex::generate_grid, plugin::SharedPlugin, units::UnitCounter};
 
+use cities::*;
 use players::*;
 use turn::*;
 
@@ -47,6 +49,7 @@ fn main() {
         .init_resource::<ColorCounter>()
         .init_resource::<PlayerCounter>()
         .init_resource::<UnitCounter>()
+        .init_resource::<CityCounter>()
         .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
@@ -58,7 +61,12 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
-                resolve_turn,
+                apply_unit_moves,
+                grow_city_population_if_turn_ready,
+                claim_city_tiles,
+                recalculate_city_yields,
+                grant_city_gold_if_turn_ready,
+                advance_turn,
             )
                 .chain(),
         )
@@ -101,7 +109,7 @@ fn start_server(
 
 fn spawn_grid(mut commands: Commands) {
     for pos in generate_grid(GRID_RADIUS) {
-        commands.spawn((Replicated, HexTile, pos));
+        commands.spawn((Replicated, HexTile, pos, DEFAULT_TILE_RESOURCES));
     }
 
     commands.spawn((TurnState {

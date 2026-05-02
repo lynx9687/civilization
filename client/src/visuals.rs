@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use shared::{
+    cities::City,
     components::*,
     hex::{HexPosition, hex_to_pixel},
     units::*,
@@ -8,6 +9,7 @@ use shared::{
 use crate::HEX_SIZE;
 
 const SQUARE_SIZE: f32 = 20.0;
+const CITY_SIZE: f32 = 28.0;
 const UNIT_MOVE_SPEED: f32 = 300.0;
 
 /// Handles to shared hex materials for highlighting.
@@ -61,6 +63,25 @@ pub fn spawn_unit_visuals(
             Mesh2d(meshes.add(Circle::new(SQUARE_SIZE))),
             MeshMaterial2d(materials.add(color)),
             Transform::from_xyz(pixel.x, pixel.y, 1.0),
+        ));
+    }
+}
+
+pub fn spawn_city_visuals(
+    cities: Query<(Entity, &ColorIndex, &HexPosition), Added<City>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    for (entity, color_index, pos) in &cities {
+        let pixel = hex_to_pixel(pos, HEX_SIZE);
+        let color = player_color(color_index.0);
+        println!("Adding city: {entity}, at pixel {pixel}");
+        commands.entity(entity).insert((
+            Mesh2d(meshes.add(RegularPolygon::new(CITY_SIZE, 4))),
+            MeshMaterial2d(materials.add(color)),
+            Transform::from_xyz(pixel.x, pixel.y, 2.0)
+                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)),
         ));
     }
 }

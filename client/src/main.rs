@@ -57,6 +57,7 @@ fn main() {
             (
                 spawn_hex_visuals,
                 spawn_unit_visuals,
+                spawn_city_visuals,
                 update_unit_positions,
                 update_hex_highlights,
                 handle_left_click,

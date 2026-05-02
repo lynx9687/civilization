@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use rand::Rng;
 use shared::events::*;
 use shared::{components::*, hex::HexPosition, units::*};
 
+use crate::GRID_RADIUS;
+use crate::cities::{CityCounter, spawn_city_at_tile};
 use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
@@ -38,33 +41,42 @@ impl PlayerCounter {
     }
 }
 
+#[derive(SystemParam)]
+pub struct NewPlayerSetup<'w> {
+    player_map: ResMut<'w, PlayerMap>,
+    color_counter: ResMut<'w, ColorCounter>,
+    player_counter: ResMut<'w, PlayerCounter>,
+    unit_counter: ResMut<'w, UnitCounter>,
+    city_counter: ResMut<'w, CityCounter>,
+    player_state: ResMut<'w, PlayerState>,
+}
+
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
-    mut player_map: ResMut<PlayerMap>,
-    mut color_counter: ResMut<ColorCounter>,
-    mut player_counter: ResMut<PlayerCounter>,
-    mut unit_counter: ResMut<UnitCounter>,
-    mut player_state: ResMut<PlayerState>,
+    mut setup: NewPlayerSetup,
 ) {
     for client_entity in &new_clients {
-        let color_index = color_counter.next_index();
-        let player_id = player_counter.next_id();
+        let color_index = setup.color_counter.next_index();
+        let player_id = setup.player_counter.next_id();
         let player_entity = commands
             .spawn((
                 Player {
                     player_id,
                     color_index,
+                    gold: 0,
                 },
                 HexPosition::new(0, 0),
             ))
             .id();
 
-        player_map
+        setup
+            .player_map
             .client_to_player
             .insert(client_entity, player_entity);
 
-        player_state
+        setup
+            .player_state
             .turn
             .insert(client_entity, crate::turn::PlayerTurnState::InProgress);
 
@@ -79,26 +91,39 @@ pub fn handle_new_clients(
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
-        let unit_id = unit_counter.next_id();
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
+        let start_pos = HexPosition::new(x, y);
+        let city_entity = spawn_city_at_tile(
+            &mut commands,
+            &mut setup.city_counter,
+            start_pos,
+            player_id,
+            color_index,
+        );
+        println!("Spawned city: {city_entity}, for player: {player_entity}");
+
+        let unit_id = setup.unit_counter.next_id();
         let unit_entity = commands
             .spawn((
                 Unit { id: unit_id },
-                HexPosition::new(x, y),
+                start_pos,
                 Owner { player_id },
                 ColorIndex(color_index),
             ))
             .id();
 
         println!("Spawned unit: {unit_entity}, for player: {player_entity}");
-        let unit_id = unit_counter.next_id();
-        let x = rand::thread_rng().gen_range(-2..=2);
-        let y = rand::thread_rng().gen_range(-2..=2);
+        let unit_id = setup.unit_counter.next_id();
+        let second_unit_pos = start_pos
+            .neighbors()
+            .into_iter()
+            .find(|pos| pos.in_bounds(GRID_RADIUS))
+            .unwrap_or(start_pos);
         let unit_entity = commands
             .spawn((
                 Unit { id: unit_id },
-                HexPosition::new(x, y),
+                second_unit_pos,
                 Owner { player_id },
                 ColorIndex(color_index),
             ))
