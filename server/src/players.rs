@@ -84,9 +84,12 @@ pub fn handle_new_clients(
 
         let starting_units = ["warrior", "settler"];
         for unit_type in starting_units {
-            let definition = registry
-                .get(unit_type)
+            let type_id = registry
+                .id_of(unit_type)
                 .unwrap_or_else(|| panic!("missing unit definition for {unit_type}"));
+            let definition = registry
+                .get(&type_id)
+                .unwrap_or_else(|| panic!("registry has id but no definition for {unit_type}"));
             let unit_id = unit_counter.next_id();
             let x = rand::thread_rng().gen_range(-2..=2);
             let y = rand::thread_rng().gen_range(-2..=2);
@@ -94,7 +97,7 @@ pub fn handle_new_clients(
                 .spawn((
                     Unit {
                         id: unit_id,
-                        type_name: unit_type.to_string(),
+                        type_id,
                     },
                     HexPosition::new(x, y),
                     Owner { player_id },

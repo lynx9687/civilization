@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use serde::Deserialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, hash::Hash};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UnitDefinition {
@@ -14,27 +14,51 @@ pub struct UnitDefinition {
     pub terrain_cost: HashMap<String, u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UnitTypeId(pub u8);
+
 #[derive(Resource, Default, Debug)]
 pub struct UnitRegistry {
-    pub definitions: HashMap<String, UnitDefinition>,
+    pub name_to_id: HashMap<String, UnitTypeId>,
+    pub definitions: HashMap<UnitTypeId, UnitDefinition>,
 }
 
 impl UnitRegistry {
-    pub fn get(&self, name: &str) -> Option<&UnitDefinition> {
-        self.definitions.get(name)
+    pub fn get(&self, type_id: &UnitTypeId) -> Option<&UnitDefinition> {
+        self.definitions.get(type_id)
+    }
+
+    pub fn id_of(&self, name: &str) -> Option<UnitTypeId> {
+        self.name_to_id.get(name).copied()
+    }
+
+    pub fn name_of(&self, id: UnitTypeId) -> Option<&str> {
+        self.name_to_id
+            .iter()
+            .find(|(_, type_id)| **type_id == id)
+            .map(|(name, _)| name.as_str())
     }
 
     pub fn load_from_dir(dir: &std::path::Path) -> Result<Self, LoadError> {
+        let mut name_to_id = HashMap::new();
         let mut definitions = HashMap::new();
-        let entries = std::fs::read_dir(dir).map_err(|e| LoadError::Io {
+        let mut next_id: u8 = 0;
+        let read_dir = std::fs::read_dir(dir).map_err(|e| LoadError::Io {
             path: dir.to_path_buf(),
             source: e,
         })?;
+        // Collect and sort by path for deterministic ID assignment.
+        // Server and client must agree on (name → id), so the order can't
+        // depend on filesystem-arbitrary read_dir order.
+        let mut entries: Vec<_> =
+            read_dir
+                .collect::<Result<_, _>>()
+                .map_err(|e| LoadError::Io {
+                    path: dir.to_path_buf(),
+                    source: e,
+                })?;
+        entries.sort_by_key(|e| e.path());
         for entry in entries {
-            let entry = entry.map_err(|e| LoadError::Io {
-                path: dir.to_path_buf(),
-                source: e,
-            })?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("ron") {
                 continue;
@@ -52,9 +76,15 @@ impl UnitRegistry {
                 path: path.clone(),
                 source: e,
             })?;
-            definitions.insert(name, def);
+            let id = UnitTypeId(next_id);
+            name_to_id.insert(name, id);
+            definitions.insert(id, def);
+            next_id += 1;
         }
-        Ok(UnitRegistry { definitions })
+        Ok(UnitRegistry {
+            name_to_id,
+            definitions,
+        })
     }
 }
 
@@ -152,16 +182,27 @@ mod tests {
     fn test_registry_loads_all_definitions_from_dir() {
         let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
             .expect("should load");
-        assert!(registry.get("warrior").is_some());
-        assert!(registry.get("archer").is_some());
-        assert!(registry.get("cavalry").is_some());
-        assert!(registry.get("knight").is_some());
-        assert!(registry.get("settler").is_some());
+
+        let warrior_id = registry.id_of("warrior").expect("warrior should exist");
+        let archer_id = registry.id_of("archer").expect("archer should exist");
+        let cavalry_id = registry.id_of("cavalry").expect("cavalry should exist");
+        let knight_id = registry.id_of("knight").expect("knight should exist");
+        let settler_id = registry.id_of("settler").expect("settler should exist");
+
+        assert!(registry.get(&warrior_id).is_some());
+        assert!(registry.get(&archer_id).is_some());
+        assert!(registry.get(&cavalry_id).is_some());
+        assert!(registry.get(&knight_id).is_some());
+        assert!(registry.get(&settler_id).is_some());
         assert_eq!(registry.definitions.len(), 5);
 
-        let warrior = registry.get("warrior").unwrap();
+        let warrior = registry.get(&warrior_id).unwrap();
         assert_eq!(warrior.hp, 10);
         assert_eq!(warrior.move_budget, 2);
+
+        // Deterministic IDs: alphabetical sort means archer=0, cavalry=1, knight=2, settler=3, warrior=4
+        assert_eq!(archer_id, UnitTypeId(0));
+        assert_eq!(warrior_id, UnitTypeId(4));
     }
 
     #[test]

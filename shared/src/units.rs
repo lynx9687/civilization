@@ -3,6 +3,7 @@ use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::hex::HexPosition;
+use crate::unit_definition::UnitTypeId;
 
 #[derive(Component, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Health {
@@ -27,11 +28,11 @@ pub struct Owner {
 pub struct ColorIndex(pub u8);
 
 // Entity for units such as warrior/settler
-#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+#[derive(Component, Serialize, Deserialize, Debug, Clone, Copy)]
 #[require(Replicated, HexPosition)] //intuitively we want every unit to have an owner but Entity doesn't have default
 pub struct Unit {
     pub id: u32,
-    pub type_name: String,
+    pub type_id: UnitTypeId,
 }
 
 /// Assigns unique ids to players

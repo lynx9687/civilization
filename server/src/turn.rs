@@ -116,10 +116,10 @@ pub fn handle_move(
     };
 
     //validate movement against the unit's move budget
-    let Some(definition) = registry.get(&unit.type_name) else {
+    let Some(definition) = registry.get(&unit.type_id) else {
         println!(
-            "Rejected move: unknown unit type {} for unit {unit_id}",
-            unit.type_name
+            "Rejected move: unknown unit type {:?} for unit {unit_id}",
+            unit.type_id
         );
         return;
     };

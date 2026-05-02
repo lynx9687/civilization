@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use shared::{
     components::*,
     hex::{HexPosition, hex_to_pixel},
+    unit_definition::UnitRegistry,
     units::*,
 };
 
@@ -52,25 +53,24 @@ pub fn spawn_unit_visuals(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    registry: Res<UnitRegistry>,
 ) {
     for (entity, unit, color_index, pos) in &units {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
         let color = player_color(color_index.0);
-        let mesh_handle = match unit.type_name.as_str() {
+        let name = registry.name_of(unit.type_id).unwrap_or("");
+        let mesh_handle = match name {
             "warrior" => meshes.add(Circle::new(SQUARE_SIZE)),
             "archer" => meshes.add(RegularPolygon::new(SQUARE_SIZE, 3)),
             "cavalry" => meshes.add(Rectangle::new(SQUARE_SIZE * 1.6, SQUARE_SIZE * 0.8)),
             "knight" => meshes.add(RegularPolygon::new(SQUARE_SIZE, 5)),
             "settler" => meshes.add(Rectangle::new(SQUARE_SIZE, SQUARE_SIZE)),
             other => {
-                eprintln!("Unknown unit type {other}, falling back to circle");
+                eprintln!("Unknown unit type {other:?}, falling back to circle");
                 meshes.add(Circle::new(SQUARE_SIZE))
             }
         };
-        println!(
-            "Adding unit: {entity} (type {}) at pixel {pixel}",
-            unit.type_name
-        );
+        println!("Adding unit: {entity} (type {name}) at pixel {pixel}");
         commands.entity(entity).insert((
             Mesh2d(mesh_handle),
             MeshMaterial2d(materials.add(color)),

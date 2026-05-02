@@ -58,7 +58,7 @@ pub fn update_hex_highlights(
 
     let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit
         && let Ok((unit, pos)) = units.get(selected_unit)
-        && let Some(def) = registry.get(&unit.type_name)
+        && let Some(def) = registry.get(&unit.type_id)
     {
         all_tiles
             .iter()
@@ -164,7 +164,7 @@ pub fn handle_right_click(
         return;
     };
 
-    let Some(def) = registry.get(&unit.type_name) else {
+    let Some(def) = registry.get(&unit.type_id) else {
         return;
     };
 
