@@ -62,10 +62,14 @@ pub fn spawn_city_at_tile(
 pub fn claim_city_tiles(
     mut commands: Commands,
     cities: Query<(&City, &Owner, &HexPosition, &CityStats), With<City>>,
-    tiles: Query<(Entity, &HexPosition), With<HexTile>>,
+    tiles: Query<(Entity, &HexPosition, Option<&TileOwner>), With<HexTile>>,
 ) {
     for (city, owner, city_pos, stats) in &cities {
-        for (tile_entity, tile_pos) in &tiles {
+        for (tile_entity, tile_pos, tile_owner) in &tiles {
+            if tile_owner.is_some_and(|tile_owner| tile_owner.city_id != city.id) {
+                continue;
+            }
+
             if city_pos.distance(tile_pos) <= stats.border_range {
                 commands.entity(tile_entity).insert(TileOwner {
                     player_id: owner.player_id,
