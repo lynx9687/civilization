@@ -87,6 +87,7 @@ pub fn handle_left_click(
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
     units: Query<(Entity, &Owner, &HexPosition), With<Unit>>,
+    players: Query<&Player>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -111,12 +112,12 @@ pub fn handle_left_click(
     };
 
     println!("Target {target:?}");
-    println!("Player entity {player_id}");
+    println!("Player id {player_id}");
     // select clicked unit
     for (unit_entity, owner, pos) in units {
-        let x = owner.player_id;
-        println!("Unit {unit_entity} with owner {x} at position {pos:?}");
-        if owner.player_id == player_id && *pos == target {
+        let owner_player_id = players.get(owner.0).ok().map(|p| p.player_id);
+        println!("Unit {unit_entity} with owner {owner_player_id:?} at position {pos:?}");
+        if owner_player_id == Some(player_id) && *pos == target {
             controller.selected_unit = Some(unit_entity);
             println!("Selected unit {unit_entity}");
             return;
