@@ -4,6 +4,7 @@ use bevy_replicon::prelude::*;
 use crate::components::*;
 use crate::events::*;
 use crate::hex::HexPosition;
+use crate::unit_definition::load_unit_registry;
 use crate::units::*;
 
 pub struct SharedPlugin;
@@ -20,6 +21,7 @@ impl Plugin for SharedPlugin {
             .replicate::<Health>()
             .add_client_event::<MoveAction>(Channel::Ordered)
             .add_client_event::<FinishTurn>(Channel::Ordered)
-            .add_server_event::<YourPlayer>(Channel::Ordered);
+            .add_server_event::<YourPlayer>(Channel::Ordered)
+            .add_systems(Startup, load_unit_registry);
     }
 }

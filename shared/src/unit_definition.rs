@@ -128,6 +128,25 @@ pub fn is_within_move_range(
     d > 0 && (d as u32) <= move_budget
 }
 
+/// Startup system that loads `UnitRegistry` from `assets/units/` and inserts it as a resource.
+/// Registered by `SharedPlugin` so both server and client get it for free.
+pub fn load_unit_registry(mut commands: Commands) {
+    let path = std::path::Path::new("assets/units");
+    match UnitRegistry::load_from_dir(path) {
+        Ok(registry) => {
+            println!(
+                "Loaded {} unit definitions from {}",
+                registry.definitions.len(),
+                path.display()
+            );
+            commands.insert_resource(registry);
+        }
+        Err(e) => {
+            panic!("Failed to load unit registry from {}: {e}", path.display());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
