@@ -17,12 +17,17 @@ impl Health {
     }
 }
 
-// Tracks the player owning a unit
-// I'm not sure if this is the correct way to do it. Needs discussion - Kacper
+// Tracks the player owning a unit. Bevy relationship: owning the player entity.
+// `linked_spawn` on `OwnedUnits` cascades despawn — when the player despawns,
+// its units despawn automatically. `#[entities]` lets replicon remap the entity
+// id from server-space to client-space when replicating.
 #[derive(Component, Serialize, Deserialize, Debug)]
-pub struct Owner {
-    pub player_id: u32,
-}
+#[relationship(relationship_target = OwnedUnits)]
+pub struct Owner(#[entities] pub Entity);
+
+#[derive(Component, Default, Debug)]
+#[relationship_target(relationship = Owner, linked_spawn)]
+pub struct OwnedUnits(Vec<Entity>);
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct ColorIndex(pub u8);

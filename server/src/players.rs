@@ -100,7 +100,7 @@ pub fn handle_new_clients(
                         type_id,
                     },
                     HexPosition::new(x, y),
-                    Owner { player_id },
+                    Owner(player_entity),
                     ColorIndex(color_index),
                     Health::full(definition.hp),
                 ))
