@@ -128,6 +128,15 @@ pub fn is_within_move_range(
     d > 0 && (d as u32) <= move_budget
 }
 
+pub fn is_within_attack_range(
+    from: &crate::hex::HexPosition,
+    to: &crate::hex::HexPosition,
+    attack_range: u32,
+) -> bool {
+    let d = from.distance(to);
+    d > 0 && (d as u32) <= attack_range
+}
+
 /// Startup system that loads `UnitRegistry` from `assets/units/` and inserts it as a resource.
 /// Registered by `SharedPlugin` so both server and client get it for free.
 pub fn load_unit_registry(mut commands: Commands) {
@@ -287,5 +296,25 @@ mod tests {
         assert!(verbs.contains(&UnitVerb::Skip));
         // settler has attack_damage = 0 → Attack must be absent
         assert!(!verbs.contains(&UnitVerb::Attack));
+    }
+
+    #[test]
+    fn test_is_within_attack_range_boundaries() {
+        use crate::hex::HexPosition;
+
+        let from = HexPosition::new(0, 0);
+        let same = HexPosition::new(0, 0);
+        let one  = HexPosition::new(1, 0);
+        let two  = HexPosition::new(2, 0);
+
+        // attack_range 1: only adjacent enemies
+        assert!(!is_within_attack_range(&from, &same, 1)); // same hex never targetable
+        assert!( is_within_attack_range(&from, &one,  1));
+        assert!(!is_within_attack_range(&from, &two,  1));
+
+        // attack_range 2 (archer): up to 2 hexes away
+        assert!( is_within_attack_range(&from, &one,  2));
+        assert!( is_within_attack_range(&from, &two,  2));
+        assert!(!is_within_attack_range(&from, &HexPosition::new(3, 0), 2));
     }
 }
