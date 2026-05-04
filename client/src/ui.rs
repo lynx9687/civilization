@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
 use shared::components::*;
 use shared::events::FinishTurn;
+use shared::unit_definition::UnitVerb;
 
 use crate::LocalPlayerColor;
 use crate::input::{Controller, LastSubmittedTurn};
@@ -11,6 +12,12 @@ pub struct TurnUiText;
 
 #[derive(Component)]
 pub struct FinishTurnButton;
+
+#[derive(Component)]
+pub struct ActionBar;
+
+#[derive(Component)]
+pub struct VerbButton(pub UnitVerb);
 
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
@@ -48,6 +55,46 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             BackgroundColor(Color::BLACK),
         ))
         .with_child((Text::new("Finish Turn"),));
+
+    // bottom-left action bar; hidden while UiState == Idle
+    commands
+        .spawn((
+            ActionBar,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(10.0),
+                left: Val::Px(10.0),
+                display: Display::None,
+                column_gap: Val::Px(6.0),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            for verb in [
+                UnitVerb::Move,
+                UnitVerb::Attack,
+                UnitVerb::Fortify,
+                UnitVerb::Build,
+                UnitVerb::Skip,
+            ] {
+                parent
+                    .spawn((
+                        VerbButton(verb),
+                        Button,
+                        Node {
+                            width: Val::Px(80.0),
+                            height: Val::Px(40.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
+                        BackgroundColor(Color::BLACK),
+                    ))
+                    .with_child(Text::new(verb_label(verb)));
+            }
+        });
 }
 
 pub fn finish_turn_clicked(
@@ -101,4 +148,58 @@ pub fn update_turn_ui(
     };
 
     **text = message;
+}
+
+use crate::input::UiState;
+use shared::unit_definition::{UnitRegistry, available_verbs};
+use shared::units::Unit;
+
+// reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
+pub fn update_action_bar(
+    ui_state: Res<UiState>,
+    mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
+    mut buttons: Query<(&VerbButton, &mut BackgroundColor)>,
+    units: Query<&Unit>,
+    registry: Res<UnitRegistry>,
+) {
+    if !ui_state.is_changed() {
+        return;
+    }
+    let unit_entity = match *ui_state {
+        UiState::Idle => {
+            for mut node in &mut bars {
+                node.display = Display::None;
+            }
+            return;
+        }
+        UiState::UnitSelected { unit } => unit,
+        UiState::Targeting { unit, .. } => unit,
+    };
+
+    for mut node in &mut bars {
+        node.display = Display::Flex;
+    }
+
+    let Ok(unit) = units.get(unit_entity) else { return; };
+    let Some(def) = registry.get(&unit.type_id) else { return; };
+    let available = available_verbs(def);
+
+    for (button, mut bg) in &mut buttons {
+        if available.contains(&button.0) {
+            *bg = BackgroundColor(Color::BLACK);
+        } else {
+            // greyed: visually distinct but click handler will also reject
+            *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+        }
+    }
+}
+
+fn verb_label(v: UnitVerb) -> &'static str {
+    match v {
+        UnitVerb::Move => "Move",
+        UnitVerb::Attack => "Attack",
+        UnitVerb::Fortify => "Fortify",
+        UnitVerb::Build => "Build",
+        UnitVerb::Skip => "Skip",
+    }
 }

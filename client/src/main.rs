@@ -64,6 +64,7 @@ fn main() {
                 handle_right_click,
                 reset_submission_on_new_turn,
                 update_turn_ui,
+                update_action_bar,
             ),
         )
         .run();
