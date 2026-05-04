@@ -28,6 +28,25 @@ pub struct Controller {
     pub selected_unit: Option<Entity>,
 }
 
+/// Selection / targeting state. Drives the action bar visibility and
+/// the map-highlight overlay. Idle = no unit selected.
+#[derive(Resource, Default)]
+pub enum UiState {
+    #[default]
+    Idle,
+    #[allow(dead_code)]
+    UnitSelected { unit: Entity },
+    #[allow(dead_code)]
+    Targeting { unit: Entity, verb: TargetableVerb },
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub enum TargetableVerb {
+    Move,
+    Attack,
+}
+
 #[derive(SystemParam)]
 pub struct CursorWorld<'w, 's> {
     windows: Query<'w, 's, &'static Window>,
