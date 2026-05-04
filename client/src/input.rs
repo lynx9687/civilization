@@ -79,12 +79,13 @@ pub fn update_hex_highlights(
 
     // compute the current overlay set based on UiState
     let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match *ui_state {
-        UiState::Targeting { unit, verb } => {
+        UiState::Targeting { unit, verb } => 'overlay: {
             let Ok((u, pos, _)) = units.get(unit) else {
-                return;
+                // stale unit ref — fall through with no overlay so the loop repaints to default
+                break 'overlay (Vec::new(), Vec::new());
             };
             let Some(def) = registry.get(&u.type_id) else {
-                return;
+                break 'overlay (Vec::new(), Vec::new());
             };
             match verb {
                 TargetableVerb::Move => {

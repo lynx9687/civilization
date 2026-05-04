@@ -7,7 +7,7 @@ use shared::events::*;
 use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
-use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
+use crate::turn::{PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
 #[derive(Resource, Default)]
@@ -112,7 +112,6 @@ pub fn handle_disconnects(
     mut disconnected: RemovedComponents<ConnectedClient>,
     mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
-    mut pending_moves: ResMut<PendingMoves>,
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in disconnected.read() {
@@ -121,7 +120,6 @@ pub fn handle_disconnects(
             player_state.finished_cnt -= 1;
         }
         if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
-            pending_moves.moves.remove(&player_entity);
             commands.entity(player_entity).despawn();
             println!("Player disconnected, despawned {player_entity}");
         }

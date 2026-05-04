@@ -46,7 +46,6 @@ fn main() {
         .init_resource::<PlayerMap>()
         .init_resource::<ColorCounter>()
         .init_resource::<PlayerCounter>()
-        .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_unit_action)

@@ -12,13 +12,6 @@ use shared::{components::*, hex::HexPosition};
 use crate::GRID_RADIUS;
 use crate::players::PlayerMap;
 
-/// Collects submitted moves during the Accepting phase, then drains them all at once to resolve the turn.
-/// Maps player entity → target hex.
-#[derive(Resource, Default)]
-pub struct PendingMoves {
-    pub moves: HashMap<Entity, HexPosition>,
-}
-
 /// Represents whether player is still making moves or has finished his turn
 #[derive(PartialEq, Eq)]
 pub enum PlayerTurnState {
@@ -34,11 +27,7 @@ pub struct PlayerState {
     pub finished_cnt: i32,
 }
 
-pub fn update_turn_phase(
-    players: Query<(), With<Player>>,
-    mut turn_state: Query<&mut TurnState>,
-    mut pending_moves: ResMut<PendingMoves>,
-) {
+pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query<&mut TurnState>) {
     let count = players.iter().count();
     let Ok(mut state) = turn_state.single_mut() else {
         return;
@@ -47,7 +36,6 @@ pub fn update_turn_phase(
     if count < 2 {
         if state.phase != TurnPhase::WaitingForPlayers {
             state.phase = TurnPhase::WaitingForPlayers;
-            pending_moves.moves.clear();
             println!("Not enough players ({count}), waiting...");
         }
     } else if state.phase == TurnPhase::WaitingForPlayers {
@@ -275,21 +263,6 @@ mod tests {
     use super::*;
     use crate::players::PlayerMap;
 
-    #[test]
-    fn test_pending_moves_tracking() {
-        let mut pending = PendingMoves::default();
-        let entity = Entity::from_bits(1);
-        let target = HexPosition::new(1, 0);
-
-        assert!(!pending.moves.contains_key(&entity));
-        pending.moves.insert(entity, target);
-        assert!(pending.moves.contains_key(&entity));
-        assert_eq!(pending.moves.len(), 1);
-
-        pending.moves.drain();
-        assert_eq!(pending.moves.len(), 0);
-    }
-
     /// Regression test: a rejected action must NOT clear a previously queued valid marker.
     ///
     /// Scenario: unit already has `MoveTo` queued. Player submits an invalid Attack
@@ -323,7 +296,6 @@ mod tests {
         registry.definitions.insert(warrior_type, warrior_def);
 
         app.insert_resource(registry);
-        app.init_resource::<PendingMoves>();
         app.init_resource::<PlayerState>();
         app.init_resource::<PlayerMap>();
         app.add_observer(handle_unit_action);
