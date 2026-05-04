@@ -277,11 +277,11 @@ mod tests {
                 .get(&registry.id_of(name).expect(name))
                 .expect(name);
             let verbs = available_verbs(def);
-            assert!(verbs.contains(&UnitVerb::Move),    "{name} should Move");
-            assert!(verbs.contains(&UnitVerb::Attack),  "{name} should Attack");
+            assert!(verbs.contains(&UnitVerb::Move), "{name} should Move");
+            assert!(verbs.contains(&UnitVerb::Attack), "{name} should Attack");
             assert!(verbs.contains(&UnitVerb::Fortify), "{name} should Fortify");
-            assert!(verbs.contains(&UnitVerb::Skip),    "{name} should Skip");
-            assert!(!verbs.contains(&UnitVerb::Build),  "{name} cannot Build");
+            assert!(verbs.contains(&UnitVerb::Skip), "{name} should Skip");
+            assert!(!verbs.contains(&UnitVerb::Build), "{name} cannot Build");
         }
     }
 
@@ -305,17 +305,17 @@ mod tests {
 
         let from = HexPosition::new(0, 0);
         let same = HexPosition::new(0, 0);
-        let one  = HexPosition::new(1, 0);
-        let two  = HexPosition::new(2, 0);
+        let one = HexPosition::new(1, 0);
+        let two = HexPosition::new(2, 0);
 
         // attack_range 1: only adjacent enemies
         assert!(!is_within_attack_range(&from, &same, 1)); // same hex never targetable
-        assert!( is_within_attack_range(&from, &one,  1));
-        assert!(!is_within_attack_range(&from, &two,  1));
+        assert!(is_within_attack_range(&from, &one, 1));
+        assert!(!is_within_attack_range(&from, &two, 1));
 
         // attack_range 2 (archer): up to 2 hexes away
-        assert!( is_within_attack_range(&from, &one,  2));
-        assert!( is_within_attack_range(&from, &two,  2));
+        assert!(is_within_attack_range(&from, &one, 2));
+        assert!(is_within_attack_range(&from, &two, 2));
         assert!(!is_within_attack_range(&from, &HexPosition::new(3, 0), 2));
     }
 }

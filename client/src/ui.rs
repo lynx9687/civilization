@@ -143,7 +143,10 @@ pub fn update_turn_ui(
             if submitted {
                 format!("Turn {} -- Waiting for other players...", state.turn_number)
             } else {
-                format!("Turn {} -- Click a neighbor hex to move", state.turn_number)
+                format!(
+                    "Turn {} -- Select a unit, then pick an action",
+                    state.turn_number
+                )
             }
         }
     };
@@ -177,8 +180,12 @@ pub fn update_action_bar(
         node.display = Display::Flex;
     }
 
-    let Ok(unit) = units.get(unit_entity) else { return; };
-    let Some(def) = registry.get(&unit.type_id) else { return; };
+    let Ok(unit) = units.get(unit_entity) else {
+        return;
+    };
+    let Some(def) = registry.get(&unit.type_id) else {
+        return;
+    };
     let available = available_verbs(def);
 
     for (button, mut bg) in &mut buttons {
@@ -212,12 +219,20 @@ pub fn handle_verb_button_click(
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
 ) {
-    let Ok(VerbButton(verb)) = buttons.get(click.entity) else { return; };
+    let Ok(VerbButton(verb)) = buttons.get(click.entity) else {
+        return;
+    };
 
     // gate: only act during Accepting phase and before the player has finished
-    let Ok(state) = turn_state.single() else { return; };
-    if state.phase != TurnPhase::Accepting { return; }
-    if last_submitted.0.is_some_and(|t| t >= state.turn_number) { return; }
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
 
     let unit_entity = match *ui_state {
         UiState::UnitSelected { unit } => unit,
@@ -225,26 +240,40 @@ pub fn handle_verb_button_click(
         UiState::Idle => return,
     };
 
-    let Ok(unit) = units.get(unit_entity) else { return; };
-    let Some(def) = registry.get(&unit.type_id) else { return; };
-    if !available_verbs(def).contains(verb) { return; }
+    let Ok(unit) = units.get(unit_entity) else {
+        return;
+    };
+    let Some(def) = registry.get(&unit.type_id) else {
+        return;
+    };
+    if !available_verbs(def).contains(verb) {
+        return;
+    }
 
     match verb {
         UnitVerb::Move => {
             *ui_state = match *ui_state {
                 // re-clicking the targeting verb toggles back to UnitSelected
-                UiState::Targeting { unit, verb: TargetableVerb::Move } => {
-                    UiState::UnitSelected { unit }
-                }
-                _ => UiState::Targeting { unit: unit_entity, verb: TargetableVerb::Move },
+                UiState::Targeting {
+                    unit,
+                    verb: TargetableVerb::Move,
+                } => UiState::UnitSelected { unit },
+                _ => UiState::Targeting {
+                    unit: unit_entity,
+                    verb: TargetableVerb::Move,
+                },
             };
         }
         UnitVerb::Attack => {
             *ui_state = match *ui_state {
-                UiState::Targeting { unit, verb: TargetableVerb::Attack } => {
-                    UiState::UnitSelected { unit }
-                }
-                _ => UiState::Targeting { unit: unit_entity, verb: TargetableVerb::Attack },
+                UiState::Targeting {
+                    unit,
+                    verb: TargetableVerb::Attack,
+                } => UiState::UnitSelected { unit },
+                _ => UiState::Targeting {
+                    unit: unit_entity,
+                    verb: TargetableVerb::Attack,
+                },
             };
         }
         UnitVerb::Fortify => {
@@ -264,10 +293,14 @@ pub fn handle_verb_button_click(
         UnitVerb::Build => {
             // single-target stub: only one project per unit today (settler→city);
             // multi-target Build needs a sub-menu — see future-extensions in spec
-            let Some(project) = def.build_targets.first() else { return; };
+            let Some(project) = def.build_targets.first() else {
+                return;
+            };
             commands.client_trigger(UnitActionEvent {
                 unit: unit_entity,
-                action: UnitAction::Build { project: project.clone() },
+                action: UnitAction::Build {
+                    project: project.clone(),
+                },
             });
             *ui_state = UiState::Idle;
         }

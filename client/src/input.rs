@@ -32,8 +32,13 @@ pub struct Controller {
 pub enum UiState {
     #[default]
     Idle,
-    UnitSelected { unit: Entity },
-    Targeting { unit: Entity, verb: TargetableVerb },
+    UnitSelected {
+        unit: Entity,
+    },
+    Targeting {
+        unit: Entity,
+        verb: TargetableVerb,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -75,8 +80,12 @@ pub fn update_hex_highlights(
     // compute the current overlay set based on UiState
     let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match *ui_state {
         UiState::Targeting { unit, verb } => {
-            let Ok((u, pos, _)) = units.get(unit) else { return; };
-            let Some(def) = registry.get(&u.type_id) else { return; };
+            let Ok((u, pos, _)) = units.get(unit) else {
+                return;
+            };
+            let Some(def) = registry.get(&u.type_id) else {
+                return;
+            };
             match verb {
                 TargetableVerb::Move => {
                     let moves = all_tiles
@@ -137,12 +146,22 @@ pub fn handle_left_click(
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
-    let Ok(state) = turn_state.single() else { return; };
-    if state.phase != TurnPhase::Accepting { return; }
-    if last_submitted.0.is_some_and(|t| t >= state.turn_number) { return; }
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
 
-    let Some(target) = get_cursor_hex(&cursor) else { return; };
-    let Some(player_id) = controller.player_id else { return; };
+    let Some(target) = get_cursor_hex(&cursor) else {
+        return;
+    };
+    let Some(player_id) = controller.player_id else {
+        return;
+    };
 
     // is the click on one of my owned units?
     let owned_unit_at = |hex: HexPosition| -> Option<Entity> {
@@ -216,11 +235,7 @@ pub fn handle_left_click(
     }
 }
 
-
-pub fn handle_escape_key(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut ui_state: ResMut<UiState>,
-) {
+pub fn handle_escape_key(keys: Res<ButtonInput<KeyCode>>, mut ui_state: ResMut<UiState>) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
@@ -231,10 +246,7 @@ pub fn handle_escape_key(
 }
 
 // drops UiState back to Idle if the unit it references no longer exists
-pub fn prune_stale_selection(
-    mut ui_state: ResMut<UiState>,
-    units: Query<(), With<Unit>>,
-) {
+pub fn prune_stale_selection(mut ui_state: ResMut<UiState>, units: Query<(), With<Unit>>) {
     let referenced = match *ui_state {
         UiState::Idle => return,
         UiState::UnitSelected { unit } => unit,

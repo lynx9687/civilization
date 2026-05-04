@@ -231,11 +231,10 @@ pub fn resolve_builds(units: Query<(Entity, &BuildProject)>, mut commands: Comma
     }
 }
 
-pub fn advance_turn(
-    mut turn_state: Query<&mut TurnState>,
-    mut player_state: ResMut<PlayerState>,
-) {
-    let Ok(mut state) = turn_state.single_mut() else { return; };
+pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: ResMut<PlayerState>) {
+    let Ok(mut state) = turn_state.single_mut() else {
+        return;
+    };
     state.turn_number += 1;
     player_state.finished_cnt = 0;
     for val in player_state.turn.values_mut() {
@@ -251,7 +250,9 @@ pub fn turn_is_resolving(
     player_state: Res<PlayerState>,
     players: Query<(), With<Player>>,
 ) -> bool {
-    let Ok(state) = turn_state.single() else { return false; };
+    let Ok(state) = turn_state.single() else {
+        return false;
+    };
     if state.phase != TurnPhase::Accepting {
         return false;
     }
@@ -316,7 +317,9 @@ mod tests {
             terrain_cost: HashMap::new(),
         };
         let mut registry = UnitRegistry::default();
-        registry.name_to_id.insert("warrior".to_string(), warrior_type);
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
         registry.definitions.insert(warrior_type, warrior_def);
 
         app.insert_resource(registry);
@@ -339,7 +342,12 @@ mod tests {
             });
 
             // Owning player entity.
-            let player_entity = world.spawn(Player { player_id: 0, color_index: 0 }).id();
+            let player_entity = world
+                .spawn(Player {
+                    player_id: 0,
+                    color_index: 0,
+                })
+                .id();
 
             // "Client" entity — just a marker entity replicon would have created.
             let client_entity = world.spawn_empty().id();
@@ -413,9 +421,13 @@ mod tests {
         let entity = app
             .world_mut()
             .spawn((
-                Unit { type_id: UnitTypeId(0) },
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
                 HexPosition::new(0, 0),
-                MoveTo { pos: HexPosition::new(2, -1) },
+                MoveTo {
+                    pos: HexPosition::new(2, -1),
+                },
             ))
             .id();
         app.update();
@@ -438,9 +450,13 @@ mod tests {
         let entity = app
             .world_mut()
             .spawn((
-                Unit { type_id: UnitTypeId(0) },
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
                 HexPosition::new(0, 0),
-                AttackTarget { pos: HexPosition::new(1, 0) },
+                AttackTarget {
+                    pos: HexPosition::new(1, 0),
+                },
             ))
             .id();
         app.update();
@@ -458,7 +474,13 @@ mod tests {
         app.add_systems(Update, resolve_fortify);
         let entity = app
             .world_mut()
-            .spawn((Unit { type_id: UnitTypeId(0) }, HexPosition::new(0, 0), Fortifying))
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                Fortifying,
+            ))
             .id();
         app.update();
         assert!(app.world().get::<Fortifying>(entity).is_none());
@@ -475,7 +497,13 @@ mod tests {
         app.add_systems(Update, resolve_skip);
         let entity = app
             .world_mut()
-            .spawn((Unit { type_id: UnitTypeId(0) }, HexPosition::new(0, 0), Skipping))
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                Skipping,
+            ))
             .id();
         app.update();
         assert!(app.world().get::<Skipping>(entity).is_none());
@@ -493,9 +521,13 @@ mod tests {
         let entity = app
             .world_mut()
             .spawn((
-                Unit { type_id: UnitTypeId(0) },
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
                 HexPosition::new(0, 0),
-                BuildProject { name: "city".into() },
+                BuildProject {
+                    name: "city".into(),
+                },
             ))
             .id();
         app.update();

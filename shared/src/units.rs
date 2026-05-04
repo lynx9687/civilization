@@ -39,7 +39,6 @@ pub struct Unit {
     pub type_id: UnitTypeId,
 }
 
-
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct MoveTo {
     pub pos: HexPosition,
