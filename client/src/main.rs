@@ -53,6 +53,7 @@ fn main() {
         .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
         .add_observer(finish_turn_clicked)
+        .add_observer(handle_verb_button_click)
         .add_systems(
             Update,
             (
@@ -61,7 +62,8 @@ fn main() {
                 update_unit_positions,
                 update_hex_highlights,
                 handle_left_click,
-                handle_right_click,
+                handle_escape_key,
+                prune_stale_selection,
                 reset_submission_on_new_turn,
                 update_turn_ui,
                 update_action_bar,

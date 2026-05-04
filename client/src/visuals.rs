@@ -17,7 +17,6 @@ pub struct HexMaterials {
     pub default: Handle<ColorMaterial>,
     pub hovered: Handle<ColorMaterial>,
     pub valid_move: Handle<ColorMaterial>,
-    #[allow(dead_code)]
     pub valid_attack: Handle<ColorMaterial>,
 }
 

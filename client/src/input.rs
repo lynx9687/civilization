@@ -1,7 +1,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::unit_definition::{UnitRegistry, is_within_move_range};
+use shared::unit_definition::{UnitRegistry, is_within_attack_range, is_within_move_range};
 use shared::{
     components::*,
     events::*,
@@ -20,12 +20,10 @@ pub struct LastSubmittedTurn(pub Option<u32>);
 #[derive(Resource, Default)]
 pub struct HoveredHex(Option<HexPosition>);
 
-/// Trakcks the currently selected unit
-/// and other information related to controling game
+/// Tracks the local player id and other permanent identity info.
 #[derive(Resource, Default)]
 pub struct Controller {
     pub player_id: Option<u32>,
-    pub selected_unit: Option<Entity>,
 }
 
 /// Selection / targeting state. Drives the action bar visibility and
@@ -34,14 +32,11 @@ pub struct Controller {
 pub enum UiState {
     #[default]
     Idle,
-    #[allow(dead_code)]
     UnitSelected { unit: Entity },
-    #[allow(dead_code)]
     Targeting { unit: Entity, verb: TargetableVerb },
 }
 
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
 pub enum TargetableVerb {
     Move,
     Attack,
@@ -67,31 +62,58 @@ pub fn update_hex_highlights(
     mut tiles: Query<(&HexPosition, &mut MeshMaterial2d<ColorMaterial>), With<HexTile>>,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
-    controller: ResMut<Controller>,
-    units: Query<(&Unit, &HexPosition)>,
+    ui_state: Res<UiState>,
+    units: Query<(&Unit, &HexPosition, &Owner)>,
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
+    players: Query<&Player>,
+    controller: Res<Controller>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
-    let valid_moves: Vec<HexPosition> = if let Some(selected_unit) = controller.selected_unit
-        && let Ok((unit, pos)) = units.get(selected_unit)
-        && let Some(def) = registry.get(&unit.type_id)
-    {
-        all_tiles
-            .iter()
-            .filter(|tile_pos| is_within_move_range(pos, tile_pos, def.move_budget))
-            .copied()
-            .collect()
-    } else {
-        Vec::new()
+    // compute the current overlay set based on UiState
+    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match *ui_state {
+        UiState::Targeting { unit, verb } => {
+            let Ok((u, pos, _)) = units.get(unit) else { return; };
+            let Some(def) = registry.get(&u.type_id) else { return; };
+            match verb {
+                TargetableVerb::Move => {
+                    let moves = all_tiles
+                        .iter()
+                        .filter(|t| is_within_move_range(pos, t, def.move_budget))
+                        .copied()
+                        .collect();
+                    (moves, Vec::new())
+                }
+                TargetableVerb::Attack => {
+                    // only enemy-occupied hexes within range light up
+                    let local_player = controller.player_id;
+                    let attacks = units
+                        .iter()
+                        .filter_map(|(_, p, owner)| {
+                            let owner_id = players.get(owner.0).ok().map(|pl| pl.player_id);
+                            let is_enemy = owner_id != local_player;
+                            if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
+                                Some(*p)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    (Vec::new(), attacks)
+                }
+            }
+        }
+        _ => (Vec::new(), Vec::new()),
     };
 
     for (pos, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
             *material = MeshMaterial2d(hex_materials.hovered.clone());
-        } else if valid_moves.contains(pos) {
+        } else if attack_targets.contains(pos) {
+            *material = MeshMaterial2d(hex_materials.valid_attack.clone());
+        } else if move_targets.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_move.clone());
         } else {
             *material = MeshMaterial2d(hex_materials.default.clone());
@@ -99,102 +121,127 @@ pub fn update_hex_highlights(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_left_click(
     mouse: Res<ButtonInput<MouseButton>>,
     cursor: CursorWorld,
+    mut commands: Commands,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
-    units: Query<(Entity, &Owner, &HexPosition), With<Unit>>,
+    controller: Res<Controller>,
+    mut ui_state: ResMut<UiState>,
+    units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     players: Query<&Player>,
+    registry: Res<UnitRegistry>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
-    //check whether turn is active
-    let Ok(state) = turn_state.single() else {
-        return;
-    };
-    if state.phase != TurnPhase::Accepting {
-        return;
-    }
-    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
-        return;
-    }
+    let Ok(state) = turn_state.single() else { return; };
+    if state.phase != TurnPhase::Accepting { return; }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) { return; }
 
-    let Some(target) = get_cursor_hex(&cursor) else {
-        return;
+    let Some(target) = get_cursor_hex(&cursor) else { return; };
+    let Some(player_id) = controller.player_id else { return; };
+
+    // is the click on one of my owned units?
+    let owned_unit_at = |hex: HexPosition| -> Option<Entity> {
+        for (entity, _unit, owner, pos) in &units {
+            let owner_id = players.get(owner.0).ok().map(|p| p.player_id);
+            if owner_id == Some(player_id) && *pos == hex {
+                return Some(entity);
+            }
+        }
+        None
     };
 
-    let Some(player_id) = controller.player_id else {
-        return;
-    };
-
-    println!("Target {target:?}");
-    println!("Player id {player_id}");
-    // select clicked unit
-    for (unit_entity, owner, pos) in units {
-        let owner_player_id = players.get(owner.0).ok().map(|p| p.player_id);
-        println!("Unit {unit_entity} with owner {owner_player_id:?} at position {pos:?}");
-        if owner_player_id == Some(player_id) && *pos == target {
-            controller.selected_unit = Some(unit_entity);
-            println!("Selected unit {unit_entity}");
-            return;
+    match *ui_state {
+        UiState::Idle => {
+            if let Some(entity) = owned_unit_at(target) {
+                *ui_state = UiState::UnitSelected { unit: entity };
+            }
+        }
+        UiState::UnitSelected { unit: _ } => {
+            if let Some(entity) = owned_unit_at(target) {
+                *ui_state = UiState::UnitSelected { unit: entity };
+            } else {
+                *ui_state = UiState::Idle;
+            }
+        }
+        UiState::Targeting { unit, verb } => {
+            // clicking another owned unit always switches selection
+            if let Some(entity) = owned_unit_at(target) {
+                *ui_state = UiState::UnitSelected { unit: entity };
+                return;
+            }
+            let Ok((_, u, _, pos)) = units.get(unit) else {
+                *ui_state = UiState::Idle;
+                return;
+            };
+            let Some(def) = registry.get(&u.type_id) else {
+                *ui_state = UiState::Idle;
+                return;
+            };
+            match verb {
+                TargetableVerb::Move => {
+                    if is_within_move_range(pos, &target, def.move_budget) {
+                        commands.client_trigger(UnitActionEvent {
+                            unit,
+                            action: UnitAction::Move { target },
+                        });
+                        *ui_state = UiState::Idle;
+                    } else {
+                        // invalid hex → fall back to selection state, bar stays
+                        *ui_state = UiState::UnitSelected { unit };
+                    }
+                }
+                TargetableVerb::Attack => {
+                    // attacker is at `pos`; enemies are units with a different owner_id at `target`
+                    let enemy_here = units.iter().any(|(_, _, owner, p)| {
+                        *p == target
+                            && players.get(owner.0).ok().map(|pl| pl.player_id) != Some(player_id)
+                    });
+                    if is_within_attack_range(pos, &target, def.attack_range) && enemy_here {
+                        commands.client_trigger(UnitActionEvent {
+                            unit,
+                            action: UnitAction::Attack { target },
+                        });
+                        *ui_state = UiState::Idle;
+                    } else {
+                        *ui_state = UiState::UnitSelected { unit };
+                    }
+                }
+            }
         }
     }
-    controller.selected_unit = None;
-    println!("Deselected unit");
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_right_click(
-    mut commands: Commands,
-    mouse: Res<ButtonInput<MouseButton>>,
-    cursor: CursorWorld,
-    turn_state: Query<&TurnState>,
-    last_submitted: Res<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
-    units: Query<(&HexPosition, &Unit)>,
-    registry: Res<UnitRegistry>,
+
+pub fn handle_escape_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut ui_state: ResMut<UiState>,
 ) {
-    if !mouse.just_pressed(MouseButton::Right) {
+    if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    //check whether turn is active
-    let Ok(state) = turn_state.single() else {
-        return;
+    *ui_state = match *ui_state {
+        UiState::Targeting { unit, .. } => UiState::UnitSelected { unit },
+        _ => UiState::Idle,
     };
-    if state.phase != TurnPhase::Accepting {
-        return;
-    }
-    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
-        return;
-    }
+}
 
-    let Some(target) = get_cursor_hex(&cursor) else {
-        return;
+// drops UiState back to Idle if the unit it references no longer exists
+pub fn prune_stale_selection(
+    mut ui_state: ResMut<UiState>,
+    units: Query<(), With<Unit>>,
+) {
+    let referenced = match *ui_state {
+        UiState::Idle => return,
+        UiState::UnitSelected { unit } => unit,
+        UiState::Targeting { unit, .. } => unit,
     };
-
-    // proceed only if unit is currently selected
-    let Some(unit_entity) = controller.selected_unit else {
-        return;
-    };
-
-    let Ok((unit_pos, unit)) = units.get(unit_entity) else {
-        return;
-    };
-
-    let Some(def) = registry.get(&unit.type_id) else {
-        return;
-    };
-
-    if is_within_move_range(unit_pos, &target, def.move_budget) {
-        // unit_entity is the client-side Entity; replicon remaps to server-side
-        commands.client_trigger(UnitActionEvent {
-            unit: unit_entity,
-            action: UnitAction::Move { target },
-        });
-        controller.selected_unit = None;
+    if units.get(referenced).is_err() {
+        *ui_state = UiState::Idle;
     }
 }
 

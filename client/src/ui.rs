@@ -1,11 +1,12 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
 use shared::components::*;
-use shared::events::FinishTurn;
-use shared::unit_definition::UnitVerb;
+use shared::events::{FinishTurn, UnitAction, UnitActionEvent};
+use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
+use shared::units::Unit;
 
 use crate::LocalPlayerColor;
-use crate::input::{Controller, LastSubmittedTurn};
+use crate::input::{LastSubmittedTurn, TargetableVerb, UiState};
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -103,7 +104,7 @@ pub fn finish_turn_clicked(
     buttons: Query<(), With<FinishTurnButton>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
+    mut ui_state: ResMut<UiState>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -111,7 +112,7 @@ pub fn finish_turn_clicked(
     if buttons.contains(click.entity) {
         commands.client_trigger(FinishTurn);
         last_submitted.0 = Some(state.turn_number);
-        controller.selected_unit = None;
+        *ui_state = UiState::Idle;
     }
 }
 
@@ -149,10 +150,6 @@ pub fn update_turn_ui(
 
     **text = message;
 }
-
-use crate::input::UiState;
-use shared::unit_definition::{UnitRegistry, available_verbs};
-use shared::units::Unit;
 
 // reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
 pub fn update_action_bar(
@@ -201,5 +198,78 @@ fn verb_label(v: UnitVerb) -> &'static str {
         UnitVerb::Fortify => "Fortify",
         UnitVerb::Build => "Build",
         UnitVerb::Skip => "Skip",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_verb_button_click(
+    click: On<Pointer<Click>>,
+    mut commands: Commands,
+    buttons: Query<&VerbButton>,
+    mut ui_state: ResMut<UiState>,
+    units: Query<&Unit>,
+    registry: Res<UnitRegistry>,
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+) {
+    let Ok(VerbButton(verb)) = buttons.get(click.entity) else { return; };
+
+    // gate: only act during Accepting phase and before the player has finished
+    let Ok(state) = turn_state.single() else { return; };
+    if state.phase != TurnPhase::Accepting { return; }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) { return; }
+
+    let unit_entity = match *ui_state {
+        UiState::UnitSelected { unit } => unit,
+        UiState::Targeting { unit, .. } => unit,
+        UiState::Idle => return,
+    };
+
+    let Ok(unit) = units.get(unit_entity) else { return; };
+    let Some(def) = registry.get(&unit.type_id) else { return; };
+    if !available_verbs(def).contains(verb) { return; }
+
+    match verb {
+        UnitVerb::Move => {
+            *ui_state = match *ui_state {
+                // re-clicking the targeting verb toggles back to UnitSelected
+                UiState::Targeting { unit, verb: TargetableVerb::Move } => {
+                    UiState::UnitSelected { unit }
+                }
+                _ => UiState::Targeting { unit: unit_entity, verb: TargetableVerb::Move },
+            };
+        }
+        UnitVerb::Attack => {
+            *ui_state = match *ui_state {
+                UiState::Targeting { unit, verb: TargetableVerb::Attack } => {
+                    UiState::UnitSelected { unit }
+                }
+                _ => UiState::Targeting { unit: unit_entity, verb: TargetableVerb::Attack },
+            };
+        }
+        UnitVerb::Fortify => {
+            commands.client_trigger(UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Fortify,
+            });
+            *ui_state = UiState::Idle;
+        }
+        UnitVerb::Skip => {
+            commands.client_trigger(UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Skip,
+            });
+            *ui_state = UiState::Idle;
+        }
+        UnitVerb::Build => {
+            // single-target stub: only one project per unit today (settler→city);
+            // multi-target Build needs a sub-menu — see future-extensions in spec
+            let Some(project) = def.build_targets.first() else { return; };
+            commands.client_trigger(UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Build { project: project.clone() },
+            });
+            *ui_state = UiState::Idle;
+        }
     }
 }
