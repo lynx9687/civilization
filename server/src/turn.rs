@@ -317,7 +317,6 @@ mod tests {
             let unit_entity = world
                 .spawn((
                     Unit {
-                        id: 0,
                         type_id: UnitTypeId(0),
                     },
                     HexPosition::new(0, 0),

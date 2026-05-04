@@ -13,7 +13,7 @@ use bevy_replicon_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::{components::*, hex::generate_grid, plugin::SharedPlugin, units::UnitCounter};
+use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 
 use players::*;
 use turn::*;
@@ -46,7 +46,6 @@ fn main() {
         .init_resource::<PlayerMap>()
         .init_resource::<ColorCounter>()
         .init_resource::<PlayerCounter>()
-        .init_resource::<UnitCounter>()
         .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
