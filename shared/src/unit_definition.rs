@@ -147,6 +147,27 @@ pub fn load_unit_registry(mut commands: Commands) {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum UnitVerb {
+    Move,
+    Attack,
+    Fortify,
+    Build,
+    Skip,
+}
+
+// universal verbs available to every unit; capability flags add the rest
+pub fn available_verbs(def: &UnitDefinition) -> Vec<UnitVerb> {
+    let mut v = vec![UnitVerb::Move, UnitVerb::Fortify, UnitVerb::Skip];
+    if def.attack_damage > 0 {
+        v.push(UnitVerb::Attack);
+    }
+    if !def.build_targets.is_empty() {
+        v.push(UnitVerb::Build);
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +256,32 @@ mod tests {
         assert!(is_within_move_range(&from, &close, 2)); // distance 2, budget 2 → ok
         assert!(!is_within_move_range(&from, &far, 2)); // distance 5, budget 2 → out
         assert!(!is_within_move_range(&from, &from, 2)); // same hex → out (no-op move)
+    }
+
+    #[test]
+    fn test_available_verbs_for_warrior_class() {
+        let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
+            .expect("should load");
+        let warrior = registry.get(&registry.id_of("warrior").unwrap()).unwrap();
+        let verbs = available_verbs(warrior);
+        assert!(verbs.contains(&UnitVerb::Move));
+        assert!(verbs.contains(&UnitVerb::Attack));
+        assert!(verbs.contains(&UnitVerb::Fortify));
+        assert!(verbs.contains(&UnitVerb::Skip));
+        assert!(!verbs.contains(&UnitVerb::Build));
+    }
+
+    #[test]
+    fn test_available_verbs_for_settler() {
+        let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
+            .expect("should load");
+        let settler = registry.get(&registry.id_of("settler").unwrap()).unwrap();
+        let verbs = available_verbs(settler);
+        assert!(verbs.contains(&UnitVerb::Move));
+        assert!(verbs.contains(&UnitVerb::Build));
+        assert!(verbs.contains(&UnitVerb::Fortify));
+        assert!(verbs.contains(&UnitVerb::Skip));
+        // settler has attack_damage = 0 → Attack must be absent
+        assert!(!verbs.contains(&UnitVerb::Attack));
     }
 }
