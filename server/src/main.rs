@@ -57,7 +57,18 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
-                resolve_turn,
+                // resolution window: gated as a group so all resolvers see
+                // a consistent "turn end" world; advance_turn closes the window.
+                (
+                    resolve_moves,
+                    resolve_attacks,
+                    resolve_fortify,
+                    resolve_skip,
+                    resolve_builds,
+                    advance_turn,
+                )
+                    .chain()
+                    .run_if(turn_is_resolving),
             )
                 .chain(),
         )

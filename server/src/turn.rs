@@ -184,42 +184,79 @@ pub fn handle_unit_action(
     }
 }
 
-pub fn resolve_turn(
-    players: Query<Entity, With<Player>>,
+// Each resolver removes its own marker so units start fresh next turn.
+// The turn-resolution gate (all players finished) is applied via run_if
+// at registration time in main.rs — keep these bodies pure so tests can
+// run them in isolation.
+
+pub fn resolve_moves(
     mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
     mut commands: Commands,
-    mut turn_state: Query<&mut TurnState>,
-    mut player_state: ResMut<PlayerState>,
 ) {
-    let Ok(state) = turn_state.single() else {
-        return;
-    };
-    if state.phase != TurnPhase::Accepting {
-        return;
-    }
-
-    let player_count = players.iter().count() as i32;
-    if player_count < 2 || player_state.finished_cnt < player_count {
-        return;
-    }
-
-    // Apply all moves simultaneously
     for (entity, move_to, mut pos) in &mut units {
         *pos = move_to.pos;
         commands.entity(entity).remove::<MoveTo>();
     }
+}
 
-    // Advance turn
-    let Ok(mut state) = turn_state.single_mut() else {
-        return;
-    };
+pub fn resolve_attacks(units: Query<(Entity, &AttackTarget)>, mut commands: Commands) {
+    // stub: combat resolution lands in a separate spec
+    for (entity, target) in &units {
+        println!("(stub) attack from {entity:?} on {:?}", target.pos);
+        commands.entity(entity).remove::<AttackTarget>();
+    }
+}
+
+pub fn resolve_fortify(units: Query<Entity, With<Fortifying>>, mut commands: Commands) {
+    // stub: persistent Fortified state added by combat-resolution spec
+    for entity in &units {
+        println!("(stub) fortify {entity:?}");
+        commands.entity(entity).remove::<Fortifying>();
+    }
+}
+
+pub fn resolve_skip(units: Query<Entity, With<Skipping>>, mut commands: Commands) {
+    // stub: passive heal lands in a separate spec
+    for entity in &units {
+        println!("(stub) skip {entity:?}");
+        commands.entity(entity).remove::<Skipping>();
+    }
+}
+
+pub fn resolve_builds(units: Query<(Entity, &BuildProject)>, mut commands: Commands) {
+    // stub: project advancement lands in city/economy spec
+    for (entity, build) in &units {
+        println!("(stub) build {} on {entity:?}", build.name);
+        commands.entity(entity).remove::<BuildProject>();
+    }
+}
+
+pub fn advance_turn(
+    mut turn_state: Query<&mut TurnState>,
+    mut player_state: ResMut<PlayerState>,
+) {
+    let Ok(mut state) = turn_state.single_mut() else { return; };
     state.turn_number += 1;
-    //reset finished players
     player_state.finished_cnt = 0;
     for val in player_state.turn.values_mut() {
         *val = PlayerTurnState::InProgress;
     }
     println!("Turn resolved! Now on turn {}", state.turn_number);
+}
+
+// run condition: the resolution window — phase = Accepting AND every
+// connected player has hit Finish Turn (>= 2 players to start a turn at all)
+pub fn turn_is_resolving(
+    turn_state: Query<&TurnState>,
+    player_state: Res<PlayerState>,
+    players: Query<(), With<Player>>,
+) -> bool {
+    let Ok(state) = turn_state.single() else { return false; };
+    if state.phase != TurnPhase::Accepting {
+        return false;
+    }
+    let count = players.iter().count() as i32;
+    count >= 2 && player_state.finished_cnt >= count
 }
 
 #[cfg(test)]
@@ -362,5 +399,106 @@ mod tests {
         );
 
         let _ = (player_entity,); // suppress unused-variable warning
+    }
+
+    #[test]
+    fn test_resolve_moves_applies_position() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_moves);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit { type_id: UnitTypeId(0) },
+                HexPosition::new(0, 0),
+                MoveTo { pos: HexPosition::new(2, -1) },
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<HexPosition>(entity).unwrap(),
+            HexPosition::new(2, -1)
+        );
+        assert!(app.world().get::<MoveTo>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_attacks_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_attacks);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit { type_id: UnitTypeId(0) },
+                HexPosition::new(0, 0),
+                AttackTarget { pos: HexPosition::new(1, 0) },
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get::<AttackTarget>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_fortify_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_fortify);
+        let entity = app
+            .world_mut()
+            .spawn((Unit { type_id: UnitTypeId(0) }, HexPosition::new(0, 0), Fortifying))
+            .id();
+        app.update();
+        assert!(app.world().get::<Fortifying>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_skip_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_skip);
+        let entity = app
+            .world_mut()
+            .spawn((Unit { type_id: UnitTypeId(0) }, HexPosition::new(0, 0), Skipping))
+            .id();
+        app.update();
+        assert!(app.world().get::<Skipping>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_builds_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit { type_id: UnitTypeId(0) },
+                HexPosition::new(0, 0),
+                BuildProject { name: "city".into() },
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get::<BuildProject>(entity).is_none());
     }
 }
