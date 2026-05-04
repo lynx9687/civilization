@@ -128,6 +128,7 @@ pub fn is_within_move_range(
     d > 0 && (d as u32) <= move_budget
 }
 
+// intentionally parallel to is_within_move_range — keep semantics in sync
 pub fn is_within_attack_range(
     from: &crate::hex::HexPosition,
     to: &crate::hex::HexPosition,
