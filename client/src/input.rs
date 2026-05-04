@@ -170,11 +170,11 @@ pub fn handle_right_click(
     };
 
     if is_within_move_range(unit_pos, &target, def.move_budget) {
-        commands.client_trigger(MoveAction {
-            unit_id: unit.id,
-            target,
+        // unit_entity is the client-side Entity; replicon remaps to server-side
+        commands.client_trigger(UnitActionEvent {
+            unit: unit_entity,
+            action: UnitAction::Move { target },
         });
-        //deselect unit
         controller.selected_unit = None;
     }
 }

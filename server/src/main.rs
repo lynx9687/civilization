@@ -50,7 +50,7 @@ fn main() {
         .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
-        .add_observer(handle_move)
+        .add_observer(handle_unit_action)
         .add_observer(handle_finish_turn)
         .add_systems(
             Update,

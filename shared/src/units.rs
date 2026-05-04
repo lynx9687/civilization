@@ -57,6 +57,23 @@ pub struct MoveTo {
     pub pos: HexPosition,
 }
 
+// queued by handle_unit_action; cleared by per-verb resolvers at turn-end
+#[derive(Component, Debug)]
+pub struct Fortifying;
+
+#[derive(Component, Debug)]
+pub struct Skipping;
+
+#[derive(Component, Debug)]
+pub struct AttackTarget {
+    pub pos: HexPosition,
+}
+
+#[derive(Component, Debug)]
+pub struct BuildProject {
+    pub name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

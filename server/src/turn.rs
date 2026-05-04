@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::unit_definition::{UnitRegistry, is_within_move_range};
+use shared::events::*;
+use shared::unit_definition::{
+    UnitRegistry, available_verbs, is_within_attack_range, is_within_move_range,
+};
 use shared::units::*;
-use shared::{components::*, events::*, hex::HexPosition};
+use shared::{components::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
 use crate::players::PlayerMap;
@@ -74,65 +77,96 @@ pub fn handle_finish_turn(
     println!("Received finish turn from player {client_entity}. Finished cnt {cnt}");
 }
 
-pub fn handle_move(
-    trigger: On<FromClient<MoveAction>>,
+#[allow(clippy::too_many_arguments)]
+pub fn handle_unit_action(
+    trigger: On<FromClient<UnitActionEvent>>,
     mut commands: Commands,
     player_map: Res<PlayerMap>,
-    units: Query<(Entity, &Unit, &HexPosition, &Owner)>,
+    units: Query<(&HexPosition, &Owner, &Unit)>,
+    enemy_units: Query<(&HexPosition, &Owner), With<Unit>>,
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
 ) {
-    let Ok(state) = turn_state.single() else {
-        return;
-    };
+    // common-path validation
+    let Ok(state) = turn_state.single() else { return; };
     if state.phase != TurnPhase::Accepting {
         return;
     }
 
     let client_entity = match trigger.client_id {
-        ClientId::Client(entity) => entity,
+        ClientId::Client(e) => e,
         ClientId::Server => return,
     };
-    let unit_id = trigger.message.unit_id;
-    let target = trigger.message.target;
     let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
 
-    let Some((unit_entity, unit, unit_pos, unit_owner)) =
-        units.iter().find(|(_, unit, _, _)| unit.id == unit_id)
-    else {
-        return;
-    };
-
-    //make sure player has right to control this unit
-    if unit_owner.0 != *player_entity {
-        return;
-    };
-
-    //validate movement against the unit's move budget
-    let Some(definition) = registry.get(&unit.type_id) else {
-        println!(
-            "Rejected move: unknown unit type {:?} for unit {unit_id}",
-            unit.type_id
-        );
-        return;
-    };
-    if !is_within_move_range(unit_pos, &target, definition.move_budget) {
-        println!(
-            "Rejected move: unit {unit_id} cannot reach {target:?} from {unit_pos:?} (budget {})",
-            definition.move_budget
-        );
-        return;
-    }
-    if !target.in_bounds(GRID_RADIUS) {
-        println!("Rejected move: {target:?} is out of bounds");
+    let entity = trigger.message.unit;
+    let Ok((pos, owner, unit)) = units.get(entity) else { return; };
+    if owner.0 != *player_entity {
         return;
     }
 
-    println!("Accepting valid movement of unit {unit_id} to pos {target:?}");
-    //add the correct component MoveTo. Overwrites previous by default
-    commands.entity(unit_entity).insert(MoveTo { pos: target });
+    let Some(def) = registry.get(&unit.type_id) else {
+        println!("Rejected action: unknown unit type {:?}", unit.type_id);
+        return;
+    };
+    let verb = trigger.message.action.verb();
+    if !available_verbs(def).contains(&verb) {
+        println!("Rejected action: verb {:?} not available for unit type", verb);
+        return;
+    }
+
+    // single-action invariant: clear any prior queued marker before inserting
+    let mut e = commands.entity(entity);
+    e.remove::<MoveTo>()
+        .remove::<AttackTarget>()
+        .remove::<Fortifying>()
+        .remove::<BuildProject>()
+        .remove::<Skipping>();
+
+    match &trigger.message.action {
+        UnitAction::Move { target } => {
+            if !is_within_move_range(pos, target, def.move_budget) {
+                println!("Rejected move: out of range");
+                return;
+            }
+            if !target.in_bounds(GRID_RADIUS) {
+                println!("Rejected move: out of bounds");
+                return;
+            }
+            e.insert(MoveTo { pos: *target });
+        }
+        UnitAction::Attack { target } => {
+            if !is_within_attack_range(pos, target, def.attack_range) {
+                println!("Rejected attack: out of range");
+                return;
+            }
+            let enemy_here = enemy_units
+                .iter()
+                .any(|(p, o)| p == target && o.0 != *player_entity);
+            if !enemy_here {
+                println!("Rejected attack: no enemy at target");
+                return;
+            }
+            e.insert(AttackTarget { pos: *target });
+        }
+        UnitAction::Fortify => {
+            e.insert(Fortifying);
+        }
+        UnitAction::Skip => {
+            e.insert(Skipping);
+        }
+        UnitAction::Build { project } => {
+            if !def.build_targets.contains(project) {
+                println!("Rejected build: project {project:?} not buildable");
+                return;
+            }
+            e.insert(BuildProject {
+                name: project.clone(),
+            });
+        }
+    }
 }
 
 pub fn resolve_turn(
