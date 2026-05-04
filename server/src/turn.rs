@@ -77,6 +77,18 @@ pub fn handle_finish_turn(
     println!("Received finish turn from player {client_entity}. Finished cnt {cnt}");
 }
 
+// replace the unit's queued action marker in one shot — single-action invariant
+fn queue_marker<M: Component>(commands: &mut Commands, entity: Entity, marker: M) {
+    commands
+        .entity(entity)
+        .remove::<MoveTo>()
+        .remove::<AttackTarget>()
+        .remove::<Fortifying>()
+        .remove::<BuildProject>()
+        .remove::<Skipping>()
+        .insert(marker);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_unit_action(
     trigger: On<FromClient<UnitActionEvent>>,
@@ -88,7 +100,9 @@ pub fn handle_unit_action(
     registry: Res<UnitRegistry>,
 ) {
     // common-path validation
-    let Ok(state) = turn_state.single() else { return; };
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
     if state.phase != TurnPhase::Accepting {
         return;
     }
@@ -102,7 +116,9 @@ pub fn handle_unit_action(
     };
 
     let entity = trigger.message.unit;
-    let Ok((pos, owner, unit)) = units.get(entity) else { return; };
+    let Ok((pos, owner, unit)) = units.get(entity) else {
+        return;
+    };
     if owner.0 != *player_entity {
         return;
     }
@@ -113,17 +129,12 @@ pub fn handle_unit_action(
     };
     let verb = trigger.message.action.verb();
     if !available_verbs(def).contains(&verb) {
-        println!("Rejected action: verb {:?} not available for unit type", verb);
+        println!(
+            "Rejected action: verb {:?} not available for unit type",
+            verb
+        );
         return;
     }
-
-    // single-action invariant: clear any prior queued marker before inserting
-    let mut e = commands.entity(entity);
-    e.remove::<MoveTo>()
-        .remove::<AttackTarget>()
-        .remove::<Fortifying>()
-        .remove::<BuildProject>()
-        .remove::<Skipping>();
 
     match &trigger.message.action {
         UnitAction::Move { target } => {
@@ -135,7 +146,7 @@ pub fn handle_unit_action(
                 println!("Rejected move: out of bounds");
                 return;
             }
-            e.insert(MoveTo { pos: *target });
+            queue_marker(&mut commands, entity, MoveTo { pos: *target });
         }
         UnitAction::Attack { target } => {
             if !is_within_attack_range(pos, target, def.attack_range) {
@@ -149,22 +160,26 @@ pub fn handle_unit_action(
                 println!("Rejected attack: no enemy at target");
                 return;
             }
-            e.insert(AttackTarget { pos: *target });
+            queue_marker(&mut commands, entity, AttackTarget { pos: *target });
         }
         UnitAction::Fortify => {
-            e.insert(Fortifying);
+            queue_marker(&mut commands, entity, Fortifying);
         }
         UnitAction::Skip => {
-            e.insert(Skipping);
+            queue_marker(&mut commands, entity, Skipping);
         }
         UnitAction::Build { project } => {
             if !def.build_targets.contains(project) {
                 println!("Rejected build: project {project:?} not buildable");
                 return;
             }
-            e.insert(BuildProject {
-                name: project.clone(),
-            });
+            queue_marker(
+                &mut commands,
+                entity,
+                BuildProject {
+                    name: project.clone(),
+                },
+            );
         }
     }
 }
@@ -209,7 +224,18 @@ pub fn resolve_turn(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use bevy::app::ScheduleRunnerPlugin;
+    use bevy::state::app::StatesPlugin;
+    use bevy_replicon::prelude::*;
+    use shared::components::*;
+    use shared::events::*;
+    use shared::unit_definition::*;
+    use shared::units::*;
+
     use super::*;
+    use crate::players::PlayerMap;
 
     #[test]
     fn test_pending_moves_tracking() {
@@ -224,5 +250,118 @@ mod tests {
 
         pending.moves.drain();
         assert_eq!(pending.moves.len(), 0);
+    }
+
+    /// Regression test: a rejected action must NOT clear a previously queued valid marker.
+    ///
+    /// Scenario: unit already has `MoveTo` queued. Player submits an invalid Attack
+    /// (no enemy at the target hex). The `MoveTo` must survive unchanged.
+    #[test]
+    fn test_rejected_action_preserves_prior_marker() {
+        // Minimal Bevy app — no SharedPlugin (avoids assets/ file I/O startup).
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        // Build a warrior-like registry entry directly, without touching the filesystem.
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PendingMoves>();
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+
+        // Flush the startup so RepliconPlugins initialises its state.
+        app.update();
+
+        // Spawn the game world: TurnState in Accepting, two players, one owned unit.
+        let (client_entity, player_entity, unit_entity) = {
+            let world = app.world_mut();
+
+            // Turn state in Accepting phase.
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+
+            // Owning player entity.
+            let player_entity = world.spawn(Player { player_id: 0, color_index: 0 }).id();
+
+            // "Client" entity — just a marker entity replicon would have created.
+            let client_entity = world.spawn_empty().id();
+
+            // Wire the client → player mapping.
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client_entity, player_entity);
+
+            // Friendly unit at (0, 0) with a MoveTo already queued.
+            let unit_entity = world
+                .spawn((
+                    Unit {
+                        id: 0,
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player_entity),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+
+            (client_entity, player_entity, unit_entity)
+        };
+
+        // Sanity: MoveTo is present before the rejected action.
+        assert!(
+            app.world().get::<MoveTo>(unit_entity).is_some(),
+            "precondition: MoveTo should be present before the test"
+        );
+
+        // Trigger an invalid Attack: target hex (3, 3) has no enemy on it.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client_entity),
+            message: UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Attack {
+                    target: HexPosition::new(3, 3),
+                },
+            },
+        });
+
+        // Flush deferred commands from the observer.
+        app.world_mut().flush();
+
+        // The prior MoveTo must still be present — the rejected attack must not clear it.
+        assert!(
+            app.world().get::<MoveTo>(unit_entity).is_some(),
+            "MoveTo was wrongly cleared by a rejected Attack action"
+        );
+        // And no AttackTarget should have been inserted.
+        assert!(
+            app.world().get::<AttackTarget>(unit_entity).is_none(),
+            "AttackTarget was wrongly inserted for a rejected Attack"
+        );
+
+        let _ = (player_entity,); // suppress unused-variable warning
     }
 }

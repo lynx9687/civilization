@@ -58,6 +58,7 @@ pub struct MoveTo {
 }
 
 // queued by handle_unit_action; cleared by per-verb resolvers at turn-end
+
 #[derive(Component, Debug)]
 pub struct Fortifying;
 
