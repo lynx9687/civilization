@@ -262,13 +262,17 @@ mod tests {
     fn test_available_verbs_for_warrior_class() {
         let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
             .expect("should load");
-        let warrior = registry.get(&registry.id_of("warrior").unwrap()).unwrap();
-        let verbs = available_verbs(warrior);
-        assert!(verbs.contains(&UnitVerb::Move));
-        assert!(verbs.contains(&UnitVerb::Attack));
-        assert!(verbs.contains(&UnitVerb::Fortify));
-        assert!(verbs.contains(&UnitVerb::Skip));
-        assert!(!verbs.contains(&UnitVerb::Build));
+        for name in ["warrior", "archer", "cavalry", "knight"] {
+            let def = registry
+                .get(&registry.id_of(name).expect(name))
+                .expect(name);
+            let verbs = available_verbs(def);
+            assert!(verbs.contains(&UnitVerb::Move),    "{name} should Move");
+            assert!(verbs.contains(&UnitVerb::Attack),  "{name} should Attack");
+            assert!(verbs.contains(&UnitVerb::Fortify), "{name} should Fortify");
+            assert!(verbs.contains(&UnitVerb::Skip),    "{name} should Skip");
+            assert!(!verbs.contains(&UnitVerb::Build),  "{name} cannot Build");
+        }
     }
 
     #[test]
