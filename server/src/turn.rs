@@ -2,19 +2,15 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::unit_definition::{UnitRegistry, is_within_move_range};
+use shared::events::*;
+use shared::unit_definition::{
+    UnitRegistry, available_verbs, is_within_attack_range, is_within_move_range,
+};
 use shared::units::*;
-use shared::{components::*, events::*, hex::HexPosition};
+use shared::{components::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
 use crate::players::PlayerMap;
-
-/// Collects submitted moves during the Accepting phase, then drains them all at once to resolve the turn.
-/// Maps player entity → target hex.
-#[derive(Resource, Default)]
-pub struct PendingMoves {
-    pub moves: HashMap<Entity, HexPosition>,
-}
 
 /// Represents whether player is still making moves or has finished his turn
 #[derive(PartialEq, Eq)]
@@ -31,11 +27,7 @@ pub struct PlayerState {
     pub finished_cnt: i32,
 }
 
-pub fn update_turn_phase(
-    players: Query<(), With<Player>>,
-    mut turn_state: Query<&mut TurnState>,
-    mut pending_moves: ResMut<PendingMoves>,
-) {
+pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query<&mut TurnState>) {
     let count = players.iter().count();
     let Ok(mut state) = turn_state.single_mut() else {
         return;
@@ -44,7 +36,6 @@ pub fn update_turn_phase(
     if count < 2 {
         if state.phase != TurnPhase::WaitingForPlayers {
             state.phase = TurnPhase::WaitingForPlayers;
-            pending_moves.moves.clear();
             println!("Not enough players ({count}), waiting...");
         }
     } else if state.phase == TurnPhase::WaitingForPlayers {
@@ -74,14 +65,29 @@ pub fn handle_finish_turn(
     println!("Received finish turn from player {client_entity}. Finished cnt {cnt}");
 }
 
-pub fn handle_move(
-    trigger: On<FromClient<MoveAction>>,
+// replace the unit's queued action marker in one shot — single-action invariant
+fn queue_marker<M: Component>(commands: &mut Commands, entity: Entity, marker: M) {
+    commands
+        .entity(entity)
+        .remove::<MoveTo>()
+        .remove::<AttackTarget>()
+        .remove::<Fortifying>()
+        .remove::<BuildProject>()
+        .remove::<Skipping>()
+        .insert(marker);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_unit_action(
+    trigger: On<FromClient<UnitActionEvent>>,
     mut commands: Commands,
     player_map: Res<PlayerMap>,
-    units: Query<(Entity, &Unit, &HexPosition, &Owner)>,
+    units: Query<(&HexPosition, &Owner, &Unit)>,
+    enemy_units: Query<(&HexPosition, &Owner), With<Unit>>,
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
 ) {
+    // common-path validation
     let Ok(state) = turn_state.single() else {
         return;
     };
@@ -90,82 +96,134 @@ pub fn handle_move(
     }
 
     let client_entity = match trigger.client_id {
-        ClientId::Client(entity) => entity,
+        ClientId::Client(e) => e,
         ClientId::Server => return,
     };
-    let unit_id = trigger.message.unit_id;
-    let target = trigger.message.target;
     let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
 
-    let Some((unit_entity, unit, unit_pos, unit_owner)) =
-        units.iter().find(|(_, unit, _, _)| unit.id == unit_id)
-    else {
+    let entity = trigger.message.unit;
+    let Ok((pos, owner, unit)) = units.get(entity) else {
         return;
     };
-
-    //make sure player has right to control this unit
-    if unit_owner.0 != *player_entity {
-        return;
-    };
-
-    //validate movement against the unit's move budget
-    let Some(definition) = registry.get(&unit.type_id) else {
-        println!(
-            "Rejected move: unknown unit type {:?} for unit {unit_id}",
-            unit.type_id
-        );
-        return;
-    };
-    if !is_within_move_range(unit_pos, &target, definition.move_budget) {
-        println!(
-            "Rejected move: unit {unit_id} cannot reach {target:?} from {unit_pos:?} (budget {})",
-            definition.move_budget
-        );
-        return;
-    }
-    if !target.in_bounds(GRID_RADIUS) {
-        println!("Rejected move: {target:?} is out of bounds");
+    if owner.0 != *player_entity {
         return;
     }
 
-    println!("Accepting valid movement of unit {unit_id} to pos {target:?}");
-    //add the correct component MoveTo. Overwrites previous by default
-    commands.entity(unit_entity).insert(MoveTo { pos: target });
+    let Some(def) = registry.get(&unit.type_id) else {
+        println!("Rejected action: unknown unit type {:?}", unit.type_id);
+        return;
+    };
+    let verb = trigger.message.action.verb();
+    if !available_verbs(def).contains(&verb) {
+        println!(
+            "Rejected action: verb {:?} not available for unit type",
+            verb
+        );
+        return;
+    }
+
+    match &trigger.message.action {
+        UnitAction::Move { target } => {
+            if !is_within_move_range(pos, target, def.move_budget) {
+                println!("Rejected move: out of range");
+                return;
+            }
+            if !target.in_bounds(GRID_RADIUS) {
+                println!("Rejected move: out of bounds");
+                return;
+            }
+            queue_marker(&mut commands, entity, MoveTo { pos: *target });
+        }
+        UnitAction::Attack { target } => {
+            if !is_within_attack_range(pos, target, def.attack_range) {
+                println!("Rejected attack: out of range");
+                return;
+            }
+            let enemy_here = enemy_units
+                .iter()
+                .any(|(p, o)| p == target && o.0 != *player_entity);
+            if !enemy_here {
+                println!("Rejected attack: no enemy at target");
+                return;
+            }
+            queue_marker(&mut commands, entity, AttackTarget { pos: *target });
+        }
+        UnitAction::Fortify => {
+            queue_marker(&mut commands, entity, Fortifying);
+        }
+        UnitAction::Skip => {
+            queue_marker(&mut commands, entity, Skipping);
+        }
+        UnitAction::Build { project } => {
+            if !def.build_targets.contains(project) {
+                println!("Rejected build: project {project:?} not buildable");
+                return;
+            }
+            queue_marker(
+                &mut commands,
+                entity,
+                BuildProject {
+                    name: project.clone(),
+                },
+            );
+        }
+    }
 }
 
-pub fn resolve_turn(
-    players: Query<Entity, With<Player>>,
+// Each resolver removes its own marker so units start fresh next turn.
+// The turn-resolution gate (all players finished) is applied via run_if
+// at registration time in main.rs — keep these bodies pure so tests can
+// run them in isolation.
+
+pub fn resolve_moves(
     mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
     mut commands: Commands,
-    mut turn_state: Query<&mut TurnState>,
-    mut player_state: ResMut<PlayerState>,
 ) {
-    let Ok(state) = turn_state.single() else {
-        return;
-    };
-    if state.phase != TurnPhase::Accepting {
-        return;
-    }
-
-    let player_count = players.iter().count() as i32;
-    if player_count < 2 || player_state.finished_cnt < player_count {
-        return;
-    }
-
-    // Apply all moves simultaneously
     for (entity, move_to, mut pos) in &mut units {
         *pos = move_to.pos;
         commands.entity(entity).remove::<MoveTo>();
     }
+}
 
-    // Advance turn
+pub fn resolve_attacks(units: Query<(Entity, &AttackTarget)>, mut commands: Commands) {
+    // stub: combat resolution lands in a separate spec
+    for (entity, target) in &units {
+        println!("(stub) attack from {entity:?} on {:?}", target.pos);
+        commands.entity(entity).remove::<AttackTarget>();
+    }
+}
+
+pub fn resolve_fortify(units: Query<Entity, With<Fortifying>>, mut commands: Commands) {
+    // stub: persistent Fortified state added by combat-resolution spec
+    for entity in &units {
+        println!("(stub) fortify {entity:?}");
+        commands.entity(entity).remove::<Fortifying>();
+    }
+}
+
+pub fn resolve_skip(units: Query<Entity, With<Skipping>>, mut commands: Commands) {
+    // stub: passive heal lands in a separate spec
+    for entity in &units {
+        println!("(stub) skip {entity:?}");
+        commands.entity(entity).remove::<Skipping>();
+    }
+}
+
+pub fn resolve_builds(units: Query<(Entity, &BuildProject)>, mut commands: Commands) {
+    // stub: project advancement lands in city/economy spec
+    for (entity, build) in &units {
+        println!("(stub) build {} on {entity:?}", build.name);
+        commands.entity(entity).remove::<BuildProject>();
+    }
+}
+
+pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: ResMut<PlayerState>) {
     let Ok(mut state) = turn_state.single_mut() else {
         return;
     };
     state.turn_number += 1;
-    //reset finished players
     player_state.finished_cnt = 0;
     for val in player_state.turn.values_mut() {
         *val = PlayerTurnState::InProgress;
@@ -173,22 +231,273 @@ pub fn resolve_turn(
     println!("Turn resolved! Now on turn {}", state.turn_number);
 }
 
+// run condition: the resolution window — phase = Accepting AND every
+// connected player has hit Finish Turn (>= 2 players to start a turn at all)
+pub fn turn_is_resolving(
+    turn_state: Query<&TurnState>,
+    player_state: Res<PlayerState>,
+    players: Query<(), With<Player>>,
+) -> bool {
+    let Ok(state) = turn_state.single() else {
+        return false;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return false;
+    }
+    let count = players.iter().count() as i32;
+    count >= 2 && player_state.finished_cnt >= count
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use bevy::app::ScheduleRunnerPlugin;
+    use bevy::state::app::StatesPlugin;
+    use bevy_replicon::prelude::*;
+    use shared::components::*;
+    use shared::events::*;
+    use shared::unit_definition::*;
+    use shared::units::*;
+
     use super::*;
+    use crate::players::PlayerMap;
+
+    /// Regression test: a rejected action must NOT clear a previously queued valid marker.
+    ///
+    /// Scenario: unit already has `MoveTo` queued. Player submits an invalid Attack
+    /// (no enemy at the target hex). The `MoveTo` must survive unchanged.
+    #[test]
+    fn test_rejected_action_preserves_prior_marker() {
+        // Minimal Bevy app — no SharedPlugin (avoids assets/ file I/O startup).
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        // Build a warrior-like registry entry directly, without touching the filesystem.
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+
+        // Flush the startup so RepliconPlugins initialises its state.
+        app.update();
+
+        // Spawn the game world: TurnState in Accepting, two players, one owned unit.
+        let (client_entity, player_entity, unit_entity) = {
+            let world = app.world_mut();
+
+            // Turn state in Accepting phase.
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+
+            // Owning player entity.
+            let player_entity = world.spawn(Player { color_index: 0 }).id();
+
+            // "Client" entity — just a marker entity replicon would have created.
+            let client_entity = world.spawn_empty().id();
+
+            // Wire the client → player mapping.
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client_entity, player_entity);
+
+            // Friendly unit at (0, 0) with a MoveTo already queued.
+            let unit_entity = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player_entity),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+
+            (client_entity, player_entity, unit_entity)
+        };
+
+        // Sanity: MoveTo is present before the rejected action.
+        assert!(
+            app.world().get::<MoveTo>(unit_entity).is_some(),
+            "precondition: MoveTo should be present before the test"
+        );
+
+        // Trigger an invalid Attack: target hex (3, 3) has no enemy on it.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client_entity),
+            message: UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Attack {
+                    target: HexPosition::new(3, 3),
+                },
+            },
+        });
+
+        // Flush deferred commands from the observer.
+        app.world_mut().flush();
+
+        // The prior MoveTo must still be present — the rejected attack must not clear it.
+        assert!(
+            app.world().get::<MoveTo>(unit_entity).is_some(),
+            "MoveTo was wrongly cleared by a rejected Attack action"
+        );
+        // And no AttackTarget should have been inserted.
+        assert!(
+            app.world().get::<AttackTarget>(unit_entity).is_none(),
+            "AttackTarget was wrongly inserted for a rejected Attack"
+        );
+
+        let _ = (player_entity,); // suppress unused-variable warning
+    }
 
     #[test]
-    fn test_pending_moves_tracking() {
-        let mut pending = PendingMoves::default();
-        let entity = Entity::from_bits(1);
-        let target = HexPosition::new(1, 0);
+    fn test_resolve_moves_applies_position() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
 
-        assert!(!pending.moves.contains_key(&entity));
-        pending.moves.insert(entity, target);
-        assert!(pending.moves.contains_key(&entity));
-        assert_eq!(pending.moves.len(), 1);
+        let mut app = App::new();
+        app.add_systems(Update, resolve_moves);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                MoveTo {
+                    pos: HexPosition::new(2, -1),
+                },
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<HexPosition>(entity).unwrap(),
+            HexPosition::new(2, -1)
+        );
+        assert!(app.world().get::<MoveTo>(entity).is_none());
+    }
 
-        pending.moves.drain();
-        assert_eq!(pending.moves.len(), 0);
+    #[test]
+    fn test_resolve_attacks_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_attacks);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                AttackTarget {
+                    pos: HexPosition::new(1, 0),
+                },
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get::<AttackTarget>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_fortify_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_fortify);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                Fortifying,
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get::<Fortifying>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_skip_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_skip);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                Skipping,
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get::<Skipping>(entity).is_none());
+    }
+
+    #[test]
+    fn test_resolve_builds_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                BuildProject {
+                    name: "city".into(),
+                },
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get::<BuildProject>(entity).is_none());
     }
 }

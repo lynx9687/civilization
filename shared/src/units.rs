@@ -36,25 +36,30 @@ pub struct ColorIndex(pub u8);
 #[derive(Component, Serialize, Deserialize, Debug, Clone, Copy)]
 #[require(Replicated, HexPosition)] //intuitively we want every unit to have an owner but Entity doesn't have default
 pub struct Unit {
-    pub id: u32,
     pub type_id: UnitTypeId,
-}
-
-/// Assigns unique ids to players
-#[derive(Resource, Default)]
-pub struct UnitCounter(u32);
-
-impl UnitCounter {
-    pub fn next_id(&mut self) -> u32 {
-        let res = self.0;
-        self.0 += 1;
-        res
-    }
 }
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct MoveTo {
     pub pos: HexPosition,
+}
+
+// queued by handle_unit_action; cleared by per-verb resolvers at turn-end
+
+#[derive(Component, Debug)]
+pub struct Fortifying;
+
+#[derive(Component, Debug)]
+pub struct Skipping;
+
+#[derive(Component, Debug)]
+pub struct AttackTarget {
+    pub pos: HexPosition,
+}
+
+#[derive(Component, Debug)]
+pub struct BuildProject {
+    pub name: String,
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use shared::events::*;
 use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
-use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
+use crate::turn::{PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
 #[derive(Resource, Default)]
@@ -27,40 +27,19 @@ impl ColorCounter {
     }
 }
 
-/// Assigns unique ids to players
-#[derive(Resource, Default)]
-pub struct PlayerCounter(u32);
-
-impl PlayerCounter {
-    pub fn next_id(&mut self) -> u32 {
-        let res = self.0;
-        self.0 += 1;
-        res
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
     mut player_map: ResMut<PlayerMap>,
     mut color_counter: ResMut<ColorCounter>,
-    mut player_counter: ResMut<PlayerCounter>,
-    mut unit_counter: ResMut<UnitCounter>,
     registry: Res<UnitRegistry>,
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in &new_clients {
         let color_index = color_counter.next_index();
-        let player_id = player_counter.next_id();
         let player_entity = commands
-            .spawn((
-                Player {
-                    player_id,
-                    color_index,
-                },
-                HexPosition::new(0, 0),
-            ))
+            .spawn((Player { color_index }, HexPosition::new(0, 0)))
             .id();
 
         player_map
@@ -75,7 +54,7 @@ pub fn handle_new_clients(
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(client_id),
             message: YourPlayer {
-                player_id,
+                player_entity,
                 color_index,
             },
         });
@@ -90,15 +69,11 @@ pub fn handle_new_clients(
             let definition = registry
                 .get(&type_id)
                 .unwrap_or_else(|| panic!("registry has id but no definition for {unit_type}"));
-            let unit_id = unit_counter.next_id();
             let x = rand::thread_rng().gen_range(-2..=2);
             let y = rand::thread_rng().gen_range(-2..=2);
             let unit_entity = commands
                 .spawn((
-                    Unit {
-                        id: unit_id,
-                        type_id,
-                    },
+                    Unit { type_id },
                     HexPosition::new(x, y),
                     Owner(player_entity),
                     ColorIndex(color_index),
@@ -117,7 +92,6 @@ pub fn handle_disconnects(
     mut disconnected: RemovedComponents<ConnectedClient>,
     mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
-    mut pending_moves: ResMut<PendingMoves>,
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in disconnected.read() {
@@ -126,7 +100,6 @@ pub fn handle_disconnects(
             player_state.finished_cnt -= 1;
         }
         if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
-            pending_moves.moves.remove(&player_entity);
             commands.entity(player_entity).despawn();
             println!("Player disconnected, despawned {player_entity}");
         }
