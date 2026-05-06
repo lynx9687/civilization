@@ -9,7 +9,7 @@ use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
 use crate::cities::{CityCounter, spawn_city_at_tile};
-use crate::turn::{PendingMoves, PlayerState, PlayerTurnState};
+use crate::turn::{PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
 #[derive(Resource, Default)]
@@ -29,24 +29,9 @@ impl ColorCounter {
     }
 }
 
-/// Assigns unique ids to players
-#[derive(Resource, Default)]
-pub struct PlayerCounter(u32);
-
-impl PlayerCounter {
-    pub fn next_id(&mut self) -> u32 {
-        let res = self.0;
-        self.0 += 1;
-        res
-    }
-}
-
 #[derive(SystemParam)]
 pub struct NewPlayerSetup<'w> {
     player_map: ResMut<'w, PlayerMap>,
-    color_counter: ResMut<'w, ColorCounter>,
-    player_counter: ResMut<'w, PlayerCounter>,
-    unit_counter: ResMut<'w, UnitCounter>,
     city_counter: ResMut<'w, CityCounter>,
     player_state: ResMut<'w, PlayerState>,
 }
@@ -55,16 +40,15 @@ pub struct NewPlayerSetup<'w> {
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
+    mut color_counter: ResMut<ColorCounter>,
     registry: Res<UnitRegistry>,
     mut setup: NewPlayerSetup,
 ) {
     for client_entity in &new_clients {
-        let color_index = setup.color_counter.next_index();
-        let player_id = setup.player_counter.next_id();
+        let color_index = color_counter.next_index();
         let player_entity = commands
             .spawn((
                 Player {
-                    player_id,
                     color_index,
                     gold: 0,
                 },
@@ -86,7 +70,7 @@ pub fn handle_new_clients(
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(client_id),
             message: YourPlayer {
-                player_id,
+                player_entity,
                 color_index,
             },
         });
@@ -101,15 +85,11 @@ pub fn handle_new_clients(
             let definition = registry
                 .get(&type_id)
                 .unwrap_or_else(|| panic!("registry has id but no definition for {unit_type}"));
-            let unit_id = setup.unit_counter.next_id();
             let x = rand::thread_rng().gen_range(-2..=2);
             let y = rand::thread_rng().gen_range(-2..=2);
             let unit_entity = commands
                 .spawn((
-                    Unit {
-                        id: unit_id,
-                        type_id,
-                    },
+                    Unit { type_id },
                     HexPosition::new(x, y),
                     Owner(player_entity),
                     ColorIndex(color_index),
@@ -129,7 +109,7 @@ pub fn handle_new_clients(
             &mut commands,
             &mut setup.city_counter,
             start_pos,
-            player_id,
+            player_entity,
             color_index,
         );
         println!("Spawned city: {city_entity}, for player: {player_entity}");
@@ -140,7 +120,6 @@ pub fn handle_disconnects(
     mut disconnected: RemovedComponents<ConnectedClient>,
     mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
-    mut pending_moves: ResMut<PendingMoves>,
     mut player_state: ResMut<PlayerState>,
 ) {
     for client_entity in disconnected.read() {
@@ -149,7 +128,6 @@ pub fn handle_disconnects(
             player_state.finished_cnt -= 1;
         }
         if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
-            pending_moves.moves.remove(&player_entity);
             commands.entity(player_entity).despawn();
             println!("Player disconnected, despawned {player_entity}");
         }

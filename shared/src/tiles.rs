@@ -12,6 +12,8 @@ pub struct TileResources {
 /// City ownership claim over a map tile.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileOwner {
-    pub player_id: u32,
-    pub city_id: u32,
+    #[entities]
+    pub player_entity: Entity,
+    #[entities]
+    pub city_entity: Entity,
 }

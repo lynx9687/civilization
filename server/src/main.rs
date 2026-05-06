@@ -14,7 +14,7 @@ use bevy_replicon_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::{components::*, hex::generate_grid, plugin::SharedPlugin, units::UnitCounter};
+use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 
 use cities::*;
 use players::*;
@@ -47,13 +47,10 @@ fn main() {
         .insert_resource(BindAddr(addr))
         .init_resource::<PlayerMap>()
         .init_resource::<ColorCounter>()
-        .init_resource::<PlayerCounter>()
-        .init_resource::<UnitCounter>()
         .init_resource::<CityCounter>()
-        .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
-        .add_observer(handle_move)
+        .add_observer(handle_unit_action)
         .add_observer(handle_finish_turn)
         .add_systems(
             Update,
@@ -61,12 +58,23 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
-                apply_unit_moves,
                 grow_city_population_if_turn_ready,
                 claim_city_tiles.run_if(any_pending_city_claims),
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 grant_city_gold_if_turn_ready,
                 advance_turn,
+                // resolution window: gated as a group so all resolvers see
+                // a consistent "turn end" world; advance_turn closes the window.
+                (
+                    resolve_moves,
+                    resolve_attacks,
+                    resolve_fortify,
+                    resolve_skip,
+                    resolve_builds,
+                    advance_turn,
+                )
+                    .chain()
+                    .run_if(turn_is_resolving),
             )
                 .chain(),
         )

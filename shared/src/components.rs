@@ -10,7 +10,6 @@ pub struct HexTile;
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
 #[require(Replicated)]
 pub struct Player {
-    pub player_id: u32,
     pub color_index: u8,
     pub gold: i32,
 }

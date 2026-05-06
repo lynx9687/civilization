@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
-use shared::cities::{City, CityStats};
+use shared::cities::{City, CityOwner, CityStats};
 use shared::components::*;
-use shared::events::FinishTurn;
-use shared::units::Owner;
+use shared::events::{FinishTurn, UnitAction, UnitActionEvent};
+use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
+use shared::units::Unit;
 
 use crate::LocalPlayerColor;
-use crate::input::{Controller, LastSubmittedTurn};
+use crate::input::{Controller, LastSubmittedTurn, TargetableVerb, UiState};
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -16,6 +17,12 @@ pub struct FinishTurnButton;
 
 #[derive(Component)]
 pub struct CityUiText;
+
+#[derive(Component)]
+pub struct ActionBar;
+
+#[derive(Component)]
+pub struct VerbButton(pub UnitVerb);
 
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
@@ -69,6 +76,45 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             ..default()
         },
     ));
+    // bottom-left action bar; hidden while UiState == Idle
+    commands
+        .spawn((
+            ActionBar,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(10.0),
+                left: Val::Px(10.0),
+                display: Display::None,
+                column_gap: Val::Px(6.0),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            for verb in [
+                UnitVerb::Move,
+                UnitVerb::Attack,
+                UnitVerb::Fortify,
+                UnitVerb::Build,
+                UnitVerb::Skip,
+            ] {
+                parent
+                    .spawn((
+                        VerbButton(verb),
+                        Button,
+                        Node {
+                            width: Val::Px(80.0),
+                            height: Val::Px(40.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
+                        BackgroundColor(Color::BLACK),
+                    ))
+                    .with_child(Text::new(verb_label(verb)));
+            }
+        });
 }
 
 pub fn finish_turn_clicked(
@@ -77,7 +123,7 @@ pub fn finish_turn_clicked(
     buttons: Query<(), With<FinishTurnButton>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
+    mut ui_state: ResMut<UiState>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -85,7 +131,7 @@ pub fn finish_turn_clicked(
     if buttons.contains(click.entity) {
         commands.client_trigger(FinishTurn);
         last_submitted.0 = Some(state.turn_number);
-        controller.selected_unit = None;
+        *ui_state = UiState::Idle;
     }
 }
 
@@ -116,7 +162,10 @@ pub fn update_turn_ui(
             if submitted {
                 format!("Turn {} -- Waiting for other players...", state.turn_number)
             } else {
-                format!("Turn {} -- Click a neighbor hex to move", state.turn_number)
+                format!(
+                    "Turn {} -- Select a unit, then pick an action",
+                    state.turn_number
+                )
             }
         }
     };
@@ -126,7 +175,7 @@ pub fn update_turn_ui(
 
 pub fn update_city_ui(
     controller: Res<Controller>,
-    cities: Query<(&City, &Owner, &CityStats)>,
+    cities: Query<(&City, &CityOwner, &CityStats)>,
     players: Query<&Player>,
     mut ui_text: Query<&mut Text, With<CityUiText>>,
 ) {
@@ -145,9 +194,8 @@ pub fn update_city_ui(
     };
 
     let player_gold = players
-        .iter()
-        .find(|player| player.player_id == owner.player_id)
-        .map_or(0, |player| player.gold);
+        .get(owner.entity)
+        .map_or(-99999, |player| player.gold);
 
     **text = format!(
         "City {}\nPopulation: {}\nFood: {} (+{})\nProduction: {}\nGold: +{} / owner {}",
@@ -159,4 +207,157 @@ pub fn update_city_ui(
         stats.gold_per_turn,
         player_gold
     );
+}
+
+// reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
+pub fn update_action_bar(
+    ui_state: Res<UiState>,
+    mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
+    mut buttons: Query<(&VerbButton, &mut BackgroundColor)>,
+    units: Query<&Unit>,
+    registry: Res<UnitRegistry>,
+) {
+    if !ui_state.is_changed() {
+        return;
+    }
+    let unit_entity = match *ui_state {
+        UiState::Idle => {
+            for mut node in &mut bars {
+                node.display = Display::None;
+            }
+            return;
+        }
+        UiState::UnitSelected { unit } => unit,
+        UiState::Targeting { unit, .. } => unit,
+    };
+
+    for mut node in &mut bars {
+        node.display = Display::Flex;
+    }
+
+    let Ok(unit) = units.get(unit_entity) else {
+        return;
+    };
+    let Some(def) = registry.get(&unit.type_id) else {
+        return;
+    };
+    let available = available_verbs(def);
+
+    for (button, mut bg) in &mut buttons {
+        if available.contains(&button.0) {
+            *bg = BackgroundColor(Color::BLACK);
+        } else {
+            // greyed: visually distinct but click handler will also reject
+            *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+        }
+    }
+}
+
+fn verb_label(v: UnitVerb) -> &'static str {
+    match v {
+        UnitVerb::Move => "Move",
+        UnitVerb::Attack => "Attack",
+        UnitVerb::Fortify => "Fortify",
+        UnitVerb::Build => "Build",
+        UnitVerb::Skip => "Skip",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_verb_button_click(
+    click: On<Pointer<Click>>,
+    mut commands: Commands,
+    buttons: Query<&VerbButton>,
+    mut ui_state: ResMut<UiState>,
+    units: Query<&Unit>,
+    registry: Res<UnitRegistry>,
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+) {
+    let Ok(VerbButton(verb)) = buttons.get(click.entity) else {
+        return;
+    };
+
+    // gate: only act during Accepting phase and before the player has finished
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
+
+    let unit_entity = match *ui_state {
+        UiState::UnitSelected { unit } => unit,
+        UiState::Targeting { unit, .. } => unit,
+        UiState::Idle => return,
+    };
+
+    let Ok(unit) = units.get(unit_entity) else {
+        return;
+    };
+    let Some(def) = registry.get(&unit.type_id) else {
+        return;
+    };
+    if !available_verbs(def).contains(verb) {
+        return;
+    }
+
+    match verb {
+        UnitVerb::Move => {
+            *ui_state = match *ui_state {
+                // re-clicking the targeting verb toggles back to UnitSelected
+                UiState::Targeting {
+                    unit,
+                    verb: TargetableVerb::Move,
+                } => UiState::UnitSelected { unit },
+                _ => UiState::Targeting {
+                    unit: unit_entity,
+                    verb: TargetableVerb::Move,
+                },
+            };
+        }
+        UnitVerb::Attack => {
+            *ui_state = match *ui_state {
+                UiState::Targeting {
+                    unit,
+                    verb: TargetableVerb::Attack,
+                } => UiState::UnitSelected { unit },
+                _ => UiState::Targeting {
+                    unit: unit_entity,
+                    verb: TargetableVerb::Attack,
+                },
+            };
+        }
+        UnitVerb::Fortify => {
+            commands.client_trigger(UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Fortify,
+            });
+            *ui_state = UiState::Idle;
+        }
+        UnitVerb::Skip => {
+            commands.client_trigger(UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Skip,
+            });
+            *ui_state = UiState::Idle;
+        }
+        UnitVerb::Build => {
+            // single-target stub: only one project per unit today (settler→city);
+            // multi-target Build needs a sub-menu — see future-extensions in spec
+            let Some(project) = def.build_targets.first() else {
+                return;
+            };
+            commands.client_trigger(UnitActionEvent {
+                unit: unit_entity,
+                action: UnitAction::Build {
+                    project: project.clone(),
+                },
+            });
+            *ui_state = UiState::Idle;
+        }
+    }
 }

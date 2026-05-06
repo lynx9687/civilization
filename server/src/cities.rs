@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use shared::{
-    cities::{City, CityStats},
+    cities::{City, CityOwner, CityStats},
     components::{HexTile, Player},
     hex::HexPosition,
     tiles::{TileOwner, TileResources},
-    units::{ColorIndex, Owner},
+    units::ColorIndex,
 };
 
 pub const DEFAULT_TILE_RESOURCES: TileResources = TileResources {
@@ -40,7 +40,7 @@ pub fn spawn_city_at_tile(
     commands: &mut Commands,
     city_counter: &mut CityCounter,
     pos: HexPosition,
-    player_id: u32,
+    player_entity: Entity,
     color_index: u8,
 ) -> Entity {
     let city_id = city_counter.next_id();
@@ -56,7 +56,9 @@ pub fn spawn_city_at_tile(
                 border_range: STARTING_BORDER_RANGE,
             },
             pos,
-            Owner { player_id },
+            CityOwner {
+                entity: player_entity,
+            },
             ColorIndex(color_index),
             PendingTileClaim,
         ))
@@ -81,19 +83,19 @@ pub fn any_city_yields_need_recalculation(
 /// Claims every tile inside each city's current border range.
 pub fn claim_city_tiles(
     mut commands: Commands,
-    cities: Query<(Entity, &City, &Owner, &HexPosition, &CityStats), With<PendingTileClaim>>,
+    cities: Query<(Entity, &City, &CityOwner, &HexPosition, &CityStats), With<PendingTileClaim>>,
     tiles: Query<(Entity, &HexPosition, Option<&TileOwner>), With<HexTile>>,
 ) {
-    for (city_entity, city, owner, city_pos, stats) in &cities {
+    for (city_entity, _city, owner, city_pos, stats) in &cities {
         for (tile_entity, tile_pos, tile_owner) in &tiles {
-            if tile_owner.is_some_and(|tile_owner| tile_owner.city_id != city.id) {
+            if tile_owner.is_some_and(|tile_owner| tile_owner.city_entity != city_entity) {
                 continue;
             }
 
             if city_pos.distance(tile_pos) <= stats.border_range {
                 commands.entity(tile_entity).insert(TileOwner {
-                    player_id: owner.player_id,
-                    city_id: city.id,
+                    player_entity: owner.entity,
+                    city_entity,
                 });
             }
         }
@@ -104,16 +106,16 @@ pub fn claim_city_tiles(
 
 /// Rebuilds city income from currently owned tiles.
 pub fn recalculate_city_yields(
-    mut cities: Query<(&City, &mut CityStats), With<City>>,
+    mut cities: Query<(Entity, &City, &mut CityStats), With<City>>,
     tiles: Query<(&TileOwner, &TileResources), With<HexTile>>,
 ) {
-    for (city, mut stats) in &mut cities {
+    for (city_entity, _city, mut stats) in &mut cities {
         let mut food_per_turn = 0;
         let mut production = 0;
         let mut gold_per_turn = 0;
 
         for (tile_owner, resources) in &tiles {
-            if tile_owner.city_id == city.id {
+            if tile_owner.city_entity == city_entity {
                 food_per_turn += resources.food;
                 production += resources.production;
                 gold_per_turn += resources.gold;
@@ -161,14 +163,11 @@ pub fn grow_city_population(
 
 /// Adds each city's gold income to its owning player.
 pub fn grant_city_gold(
-    cities: Query<(&Owner, &CityStats), With<City>>,
+    cities: Query<(&CityOwner, &CityStats), With<City>>,
     mut players: Query<&mut Player>,
 ) {
     for (owner, stats) in &cities {
-        let Some(mut player) = players
-            .iter_mut()
-            .find(|player| player.player_id == owner.player_id)
-        else {
+        let Ok(mut player) = players.get_mut(owner.entity) else {
             continue;
         };
         player.gold += stats.gold_per_turn;
