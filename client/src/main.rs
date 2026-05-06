@@ -53,7 +53,6 @@ fn main() {
         .init_state::<PlayerTurnPhase>()
         .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
-        .add_observer(finish_turn_clicked)
         .add_observer(handle_verb_button_click)
         .add_systems(
             Update,

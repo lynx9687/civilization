@@ -6,7 +6,7 @@ use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
 use crate::LocalPlayerColor;
-use crate::input::{Controller, LastSubmittedTurn, TargetableVerb, UiState};
+use crate::input::{LastSubmittedTurn, TargetableVerb, UiState};
 
 pub struct ColorState {
     pub idle: Color,
@@ -161,7 +161,6 @@ pub fn finish_turn_trigger_system(
             if last_submitted.0 != Some(state.turn_number) {
                 commands.client_trigger(FinishTurn);
                 last_submitted.0 = Some(state.turn_number);
-                controller.selected_unit = None;
                 *ui_state = UiState::Idle;
                 next_phase.set(PlayerTurnPhase::Waiting);
             }
