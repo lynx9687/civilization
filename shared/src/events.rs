@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::entity::MapEntities, prelude::*};
 use serde::{Deserialize, Serialize};
 
 /// Client-to-server event: player wants to move unit to target hex.
@@ -9,9 +9,10 @@ pub struct MoveAction {
 }
 
 /// Server-to-client event: tells a client which player is theirs.
-#[derive(Event, Serialize, Deserialize, Clone, Debug)]
+#[derive(Event, Serialize, Deserialize, MapEntities, Clone, Debug)]
 pub struct YourPlayer {
-    pub player_id: u32,
+    #[entities] 
+    pub player_entity: Entity,
     pub color_index: u8,
 }
 

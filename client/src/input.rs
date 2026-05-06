@@ -24,7 +24,7 @@ pub struct HoveredHex(Option<HexPosition>);
 /// and other information related to controling game
 #[derive(Resource, Default)]
 pub struct Controller {
-    pub player_id: Option<u32>,
+    pub player_entity: Option<Entity>,
     pub selected_unit: Option<Entity>,
 }
 
@@ -107,17 +107,16 @@ pub fn handle_left_click(
         return;
     };
 
-    let Some(player_id) = controller.player_id else {
+    let Some(player_entity) = controller.player_entity else {
         return;
     };
 
     println!("Target {target:?}");
-    println!("Player id {player_id}");
+    println!("Player entity {player_entity}");
     // select clicked unit
     for (unit_entity, owner, pos) in units {
-        let owner_player_id = players.get(owner.0).ok().map(|p| p.player_id);
-        println!("Unit {unit_entity} with owner {owner_player_id:?} at position {pos:?}");
-        if owner_player_id == Some(player_id) && *pos == target {
+        println!("Unit {unit_entity} with owner {owner:?} at position {pos:?}");
+        if owner.0 == player_entity && *pos == target {
             controller.selected_unit = Some(unit_entity);
             println!("Selected unit {unit_entity}");
             return;
