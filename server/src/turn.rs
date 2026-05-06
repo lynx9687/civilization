@@ -316,7 +316,6 @@ mod tests {
             // Owning player entity.
             let player_entity = world
                 .spawn(Player {
-                    player_id: 0,
                     color_index: 0,
                 })
                 .id();
