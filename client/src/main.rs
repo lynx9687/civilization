@@ -49,9 +49,9 @@ fn main() {
         .init_resource::<LastSubmittedTurn>()
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
+        .init_state::<PlayerTurnPhase>()
         .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
-        .add_observer(finish_turn_clicked)
         .add_systems(
             Update,
             (
@@ -63,6 +63,9 @@ fn main() {
                 handle_right_click,
                 reset_submission_on_new_turn,
                 update_turn_ui,
+                finish_turn_trigger_system.run_if(in_state(PlayerTurnPhase::Input)),
+                finish_turn_visual_system,
+                reset_player_turn_phase,
             ),
         )
         .run();

@@ -6,6 +6,38 @@ use shared::events::FinishTurn;
 use crate::LocalPlayerColor;
 use crate::input::{Controller, LastSubmittedTurn};
 
+pub struct ColorState {
+    pub idle: Color,
+    pub hover: Color,
+    pub pressed: Color,
+    pub waiting: Color,
+}
+
+pub struct ButtonTheme {
+    pub background: ColorState,
+    pub border: ColorState,
+}
+
+pub mod theme {
+    use super::*;
+    use bevy::color::palettes::css::*;
+
+    pub const FINISH_BUTTON: ButtonTheme = ButtonTheme {
+        background: ColorState {
+            idle: Color::Srgba(DARK_CYAN),
+            hover: Color::Srgba(LIGHT_CYAN),
+            pressed: Color::Srgba(DARK_SLATE_GRAY),
+            waiting: Color::Srgba(DARK_GRAY),
+        },
+        border: ColorState {
+            idle: Color::Srgba(TEAL),
+            hover: Color::Srgba(AQUAMARINE),
+            pressed: Color::Srgba(SLATE_GRAY),
+            waiting: Color::Srgba(GRAY),
+        },
+    };
+}
+
 #[derive(Component)]
 pub struct TurnUiText;
 
@@ -33,27 +65,41 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             FinishTurnButton,
             Button,
             Node {
-                width: Val::Px(150.0),
-                height: Val::Px(100.0),
-                border: UiRect::all(Val::Px(5.0)),
+                width: Val::Px(220.0),
+                height: Val::Px(80.0),
+                border: UiRect::all(Val::Px(4.0)),
                 justify_content: JustifyContent::Center,
-                border_radius: BorderRadius::MAX,
+                border_radius: BorderRadius::all(Val::Px(10.0)),
                 position_type: PositionType::Absolute,
                 align_items: AlignItems::Center,
-                right: Val::Px(10.0),
-                bottom: Val::Px(10.0),
+                right: Val::Px(20.0),
+                bottom: Val::Px(20.0),
                 ..Default::default()
             },
-            BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-            BackgroundColor(Color::BLACK),
+            BorderColor::from(theme::FINISH_BUTTON.border.idle),
+            BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
         ))
-        .with_child((Text::new("Finish Turn"),));
+        .with_child((
+            Text::new("FINISH TURN"),
+            TextFont {
+                font_size: 28.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
 }
 
-pub fn finish_turn_clicked(
-    click: On<Pointer<Click>>,
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub enum PlayerTurnPhase {
+    #[default]
+    Input,
+    Waiting,
+}
+
+pub fn finish_turn_trigger_system(
     mut commands: Commands,
-    buttons: Query<(), With<FinishTurnButton>>,
+    interaction_query: Query<&Interaction, (With<FinishTurnButton>, Changed<Interaction>)>,
+    mut next_phase: ResMut<NextState<PlayerTurnPhase>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
@@ -61,10 +107,58 @@ pub fn finish_turn_clicked(
     let Ok(state) = turn_state.single() else {
         return;
     };
-    if buttons.contains(click.entity) {
-        commands.client_trigger(FinishTurn);
-        last_submitted.0 = Some(state.turn_number);
-        controller.selected_unit = None;
+
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            if last_submitted.0 != Some(state.turn_number) {
+                commands.client_trigger(FinishTurn);
+                last_submitted.0 = Some(state.turn_number);
+                controller.selected_unit = None;
+                next_phase.set(PlayerTurnPhase::Waiting);
+            }
+        }
+    }
+}
+
+pub fn finish_turn_visual_system(
+    mut button_query: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<FinishTurnButton>,
+    >,
+    phase: Res<State<PlayerTurnPhase>>,
+) {
+    let thm = &theme::FINISH_BUTTON;
+
+    for (interaction, mut bg, mut border) in &mut button_query {
+        if *phase.get() == PlayerTurnPhase::Waiting {
+            *bg = thm.background.waiting.into();
+            *border = thm.border.waiting.into();
+            continue;
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = thm.background.pressed.into();
+                *border = thm.border.pressed.into();
+            }
+            Interaction::Hovered => {
+                *bg = thm.background.hover.into();
+                *border = thm.border.hover.into();
+            }
+            Interaction::None => {
+                *bg = thm.background.idle.into();
+                *border = thm.border.idle.into();
+            }
+        }
+    }
+}
+
+pub fn reset_player_turn_phase(
+    mut next_phase: ResMut<NextState<PlayerTurnPhase>>,
+    turn_state: Query<&TurnState, Changed<TurnState>>,
+) {
+    if !turn_state.is_empty() {
+        next_phase.set(PlayerTurnPhase::Input);
     }
 }
 
