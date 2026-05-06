@@ -53,10 +53,10 @@ pub fn grant_city_gold(
 pub fn claim_city_tiles(
     event: On<GrowCity>,
     mut commands: Commands,
-    cities: Query<(Entity, &City, &CityOwner, &HexPosition, &CityStats)>,
+    cities: Query<(Entity, &CityOwner, &HexPosition, &CityStats)>,
     tiles: Query<(Entity, &HexPosition, Option<&TileOwner>), With<HexTile>>,
 ) {
-    let Ok((city_entity, _city, owner, city_pos, stats)) = cities.get(event.entity) else {
+    let Ok((city_entity, owner, city_pos, stats)) = cities.get(event.entity) else {
         return;
     };
     for (tile_entity, tile_pos, tile_owner) in &tiles {
@@ -73,18 +73,18 @@ pub fn claim_city_tiles(
     }
 }
 
-/// Rebuilds city income from currently owned tiles.
+/// Recomputes city income from currently owned tiles.
 pub fn recalculate_city_yields(
-    mut cities: Query<(Entity, &City, &mut CityStats), With<City>>,
-    tiles: Query<(&TileOwner, &TileResources), With<HexTile>>,
+    mut cities: Query<(&OwnedTiles, &mut CityStats), With<City>>,
+    all_tiles: Query<&TileResources, With<HexTile>>,
 ) {
-    for (city_entity, _city, mut stats) in &mut cities {
+    for (tiles, mut stats) in &mut cities {
         let mut food_per_turn = 0;
         let mut production = 0;
         let mut gold_per_turn = 0;
 
-        for (tile_owner, resources) in &tiles {
-            if tile_owner.city_entity == city_entity {
+        for tile_entity in tiles.collection() {
+            if let Ok(resources) = all_tiles.get(*tile_entity) {
                 food_per_turn += resources.food;
                 production += resources.production;
                 gold_per_turn += resources.gold;
