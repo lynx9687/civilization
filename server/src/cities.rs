@@ -54,13 +54,9 @@ pub fn any_pending_city_claims(cities: Query<(), With<PendingTileClaim>>) -> boo
     !cities.is_empty()
 }
 
-type ChangedTileOwners<'w, 's> = Query<'w, 's, (), Or<(Added<TileOwner>, Changed<TileOwner>)>>;
-type ChangedTileResources<'w, 's> =
-    Query<'w, 's, (), Or<(Added<TileResources>, Changed<TileResources>)>>;
-
 pub fn any_city_yields_need_recalculation(
-    owned_tiles: ChangedTileOwners,
-    resource_tiles: ChangedTileResources,
+    owned_tiles: Query<Entity, Changed<TileOwner>>,
+    resource_tiles: Query<Entity, Changed<TileResources>>,
 ) -> bool {
     !owned_tiles.is_empty() || !resource_tiles.is_empty()
 }

@@ -141,8 +141,8 @@ pub fn update_hex_highlights(
             *material = MeshMaterial2d(hex_materials.valid_attack.clone());
         } else if move_targets.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_move.clone());
-        } else if let Some(tile_owner) = owner {
-            let Ok(owning_player) = players.get(tile_owner.player_entity) else {
+        } else if let Some(tile_owning_player) = owner.and_then(|x| x.player_entity) {
+            let Ok(owning_player) = players.get(tile_owning_player) else {
                 continue;
             };
             *material =

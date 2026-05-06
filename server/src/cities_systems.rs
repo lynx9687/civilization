@@ -61,8 +61,8 @@ pub fn claim_city_tiles(
 
             if city_pos.distance(tile_pos) <= stats.border_range {
                 commands.entity(tile_entity).insert(TileOwner {
-                    player_entity: owner.entity,
                     city_entity,
+                    player_entity: Some(owner.entity),
                 });
             }
         }
@@ -89,14 +89,8 @@ pub fn recalculate_city_yields(
             }
         }
 
-        if stats.food_per_turn != food_per_turn {
-            stats.food_per_turn = food_per_turn;
-        }
-        if stats.production != production {
-            stats.production = production;
-        }
-        if stats.gold_per_turn != gold_per_turn {
-            stats.gold_per_turn = gold_per_turn;
-        }
+        stats.food_per_turn = food_per_turn;
+        stats.production = production;
+        stats.gold_per_turn = gold_per_turn;
     }
 }

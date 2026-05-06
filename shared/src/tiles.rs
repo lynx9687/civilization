@@ -11,9 +11,15 @@ pub struct TileResources {
 
 /// City ownership claim over a map tile.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[relationship(relationship_target = OwnedTiles)]
 pub struct TileOwner {
     #[entities]
-    pub player_entity: Entity,
-    #[entities]
+    #[relationship]
     pub city_entity: Entity,
+    #[entities]
+    pub player_entity: Option<Entity>,
 }
+
+#[derive(Component, Serialize, Deserialize, Default, Debug)]
+#[relationship_target(relationship = TileOwner)]
+pub struct OwnedTiles(Vec<Entity>);
