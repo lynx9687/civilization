@@ -11,7 +11,7 @@ pub struct MoveAction {
 /// Server-to-client event: tells a client which player is theirs.
 #[derive(Event, Serialize, Deserialize, MapEntities, Clone, Debug)]
 pub struct YourPlayer {
-    #[entities] 
+    #[entities]
     pub player_entity: Entity,
     pub color_index: u8,
 }

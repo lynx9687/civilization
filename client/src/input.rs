@@ -87,7 +87,6 @@ pub fn handle_left_click(
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
     units: Query<(Entity, &Owner, &HexPosition), With<Unit>>,
-    players: Query<&Player>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
