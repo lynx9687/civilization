@@ -1,4 +1,5 @@
 mod cities;
+mod cities_systems;
 mod players;
 mod turn;
 
@@ -17,6 +18,7 @@ use bevy_replicon_renet::{
 use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 
 use cities::*;
+use cities_systems::*;
 use players::*;
 use turn::*;
 
@@ -57,13 +59,13 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
-                grow_city_population_if_turn_ready,
                 claim_city_tiles.run_if(any_pending_city_claims),
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
-                grant_city_gold_if_turn_ready,
                 // resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
                 (
+                    grow_city_population,
+                    grant_city_gold,
                     resolve_moves,
                     resolve_attacks,
                     resolve_fortify,

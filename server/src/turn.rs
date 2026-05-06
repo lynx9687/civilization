@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::cities::{City, CityOwner, CityStats};
 use shared::events::*;
 use shared::unit_definition::{UnitRegistry, is_within_move_range};
 use shared::unit_definition::{available_verbs, is_within_attack_range};
@@ -10,7 +9,6 @@ use shared::units::*;
 use shared::{components::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
-use crate::cities::{grant_city_gold, grow_city_population};
 use crate::players::PlayerMap;
 
 /// Represents whether player is still making moves or has finished his turn
@@ -172,57 +170,6 @@ pub fn handle_unit_action(
         }
     }
 }
-
-fn turn_resolution_ready(
-    players: Query<Entity, With<Player>>,
-    turn_state: Query<&TurnState>,
-    player_state: Res<PlayerState>,
-) -> bool {
-    let Ok(state) = turn_state.single() else {
-        return false;
-    };
-    if state.phase != TurnPhase::Accepting {
-        return false;
-    }
-
-    let player_count = players.iter().count() as i32;
-    player_count >= 2 && player_state.finished_cnt >= player_count
-}
-
-/// Advances city food and population during turn resolution.
-pub fn grow_city_population_if_turn_ready(
-    players: Query<Entity, With<Player>>,
-    turn_state: Query<&TurnState>,
-    player_state: Res<PlayerState>,
-    commands: Commands,
-    cities: Query<(Entity, &mut CityStats), With<City>>,
-) {
-    if !turn_resolution_ready(players, turn_state, player_state) {
-        return;
-    }
-
-    grow_city_population(commands, cities);
-}
-
-/// Pays city gold income to players during turn resolution.
-pub fn grant_city_gold_if_turn_ready(
-    players_ready: Query<Entity, With<Player>>,
-    turn_state: Query<&TurnState>,
-    player_state: Res<PlayerState>,
-    cities: Query<(&CityOwner, &CityStats), With<City>>,
-    players: Query<&mut Player>,
-) {
-    if !turn_resolution_ready(players_ready, turn_state, player_state) {
-        return;
-    }
-
-    grant_city_gold(cities, players);
-}
-
-// Each resolver removes its own marker so units start fresh next turn.
-// The turn-resolution gate (all players finished) is applied via run_if
-// at registration time in main.rs — keep these bodies pure so tests can
-// run them in isolation.
 
 pub fn resolve_moves(
     mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
