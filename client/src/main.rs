@@ -14,7 +14,7 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{events::*, plugin::SharedPlugin, unit_definition::UnitRegistry};
+use shared::{events::*, plugin::SharedPlugin};
 
 use input::*;
 use ui::*;
@@ -49,15 +49,7 @@ fn main() {
         .init_resource::<LastSubmittedTurn>()
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
-        .add_systems(
-            Startup,
-            (
-                load_unit_registry,
-                setup_camera,
-                connect_to_server,
-                spawn_turn_ui,
-            ),
-        )
+        .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
         .add_observer(finish_turn_clicked)
         .add_systems(
@@ -121,21 +113,4 @@ fn on_your_player(
     let player_id = trigger.player_id;
     println!("Received player_id: {player_id}");
     controller.player_id = Some(player_id);
-}
-
-fn load_unit_registry(mut commands: Commands) {
-    let path = std::path::Path::new("assets/units");
-    match UnitRegistry::load_from_dir(path) {
-        Ok(registry) => {
-            println!(
-                "Loaded {} unit definitions from {}",
-                registry.definitions.len(),
-                path.display()
-            );
-            commands.insert_resource(registry);
-        }
-        Err(e) => {
-            panic!("Failed to load unit registry from {}: {e}", path.display());
-        }
-    }
 }

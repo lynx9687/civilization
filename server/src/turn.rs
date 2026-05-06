@@ -80,7 +80,6 @@ pub fn handle_move(
     trigger: On<FromClient<MoveAction>>,
     mut commands: Commands,
     player_map: Res<PlayerMap>,
-    players: Query<&Player>,
     units: Query<(Entity, &Unit, &HexPosition, &Owner)>,
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
@@ -108,12 +107,8 @@ pub fn handle_move(
         return;
     };
 
-    let Ok(player) = players.get(*player_entity) else {
-        return;
-    };
-
     //make sure player has right to control this unit
-    if unit_owner.player_id != player.player_id {
+    if unit_owner.0 != *player_entity {
         return;
     };
 
