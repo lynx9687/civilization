@@ -19,7 +19,7 @@ impl Plugin for SharedPlugin {
             .replicate::<Owner>()
             .replicate::<ColorIndex>()
             .replicate::<Health>()
-            .add_client_event::<MoveAction>(Channel::Ordered)
+            .add_mapped_client_event::<UnitActionEvent>(Channel::Ordered)
             .add_client_event::<FinishTurn>(Channel::Ordered)
             .add_mapped_server_event::<YourPlayer>(Channel::Ordered)
             .add_systems(Startup, load_unit_registry);

@@ -13,7 +13,7 @@ use bevy_replicon_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::{components::*, hex::generate_grid, plugin::SharedPlugin, units::UnitCounter};
+use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 
 use players::*;
 use turn::*;
@@ -46,11 +46,9 @@ fn main() {
         .init_resource::<PlayerMap>()
         .init_resource::<ColorCounter>()
         .init_resource::<PlayerCounter>()
-        .init_resource::<UnitCounter>()
-        .init_resource::<PendingMoves>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
-        .add_observer(handle_move)
+        .add_observer(handle_unit_action)
         .add_observer(handle_finish_turn)
         .add_systems(
             Update,
@@ -58,7 +56,18 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
-                resolve_turn,
+                // resolution window: gated as a group so all resolvers see
+                // a consistent "turn end" world; advance_turn closes the window.
+                (
+                    resolve_moves,
+                    resolve_attacks,
+                    resolve_fortify,
+                    resolve_skip,
+                    resolve_builds,
+                    advance_turn,
+                )
+                    .chain()
+                    .run_if(turn_is_resolving),
             )
                 .chain(),
         )
