@@ -9,6 +9,7 @@ use shared::units::*;
 use shared::{components::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
+use crate::cities::spawn_city_at_tile;
 use crate::players::PlayerMap;
 
 /// Represents whether player is still making moves or has finished his turn
@@ -205,10 +206,19 @@ pub fn resolve_skip(units: Query<Entity, With<Skipping>>, mut commands: Commands
     }
 }
 
-pub fn resolve_builds(units: Query<(Entity, &BuildProject)>, mut commands: Commands) {
+pub fn resolve_builds(
+    units: Query<(Entity, &HexPosition, &Owner, &ColorIndex, &BuildProject)>,
+    mut commands: Commands,
+) {
     // stub: project advancement lands in city/economy spec
-    for (entity, build) in &units {
-        println!("(stub) build {} on {entity:?}", build.name);
+    for (entity, pos, owner, color, build) in &units {
+        if build.name == "city" {
+            println!("Settling city by {entity:?}");
+            spawn_city_at_tile(&mut commands, *pos, owner.0, color.0);
+            commands.entity(entity).despawn();
+        } else {
+            println!("(stub) build {} on {entity:?}", build.name);
+        }
         commands.entity(entity).remove::<BuildProject>();
     }
 }

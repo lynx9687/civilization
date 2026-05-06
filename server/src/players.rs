@@ -8,7 +8,6 @@ use shared::events::*;
 use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
-use crate::cities::spawn_city_at_tile;
 use crate::turn::{PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
@@ -100,12 +99,6 @@ pub fn handle_new_clients(
                 definition.hp
             );
         }
-
-        let x = rand::thread_rng().gen_range(-2..=2);
-        let y = rand::thread_rng().gen_range(-2..=2);
-        let start_pos = HexPosition::new(x, y);
-        let city_entity = spawn_city_at_tile(&mut commands, start_pos, player_entity, color_index);
-        println!("Spawned city: {city_entity}, for player: {player_entity}");
     }
 }
 
