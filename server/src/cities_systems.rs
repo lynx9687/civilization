@@ -28,7 +28,9 @@ pub fn grow_city_population(
             let border_range = 1 + ((stats.population - 1) / POPULATION_PER_BORDER_RANGE) as i32;
             stats.border_range = border_range.clamp(STARTING_BORDER_RANGE, MAX_BORDER_RANGE);
             if stats.border_range != old_border_range {
-                commands.entity(city_entity).insert(PendingTileClaim);
+                commands.trigger(GrowCity {
+                    entity: city_entity,
+                });
             }
         }
     }
@@ -49,25 +51,25 @@ pub fn grant_city_gold(
 
 /// Claims every tile inside each city's current border range.
 pub fn claim_city_tiles(
+    event: On<GrowCity>,
     mut commands: Commands,
-    cities: Query<(Entity, &City, &CityOwner, &HexPosition, &CityStats), With<PendingTileClaim>>,
+    cities: Query<(Entity, &City, &CityOwner, &HexPosition, &CityStats)>,
     tiles: Query<(Entity, &HexPosition, Option<&TileOwner>), With<HexTile>>,
 ) {
-    for (city_entity, _city, owner, city_pos, stats) in &cities {
-        for (tile_entity, tile_pos, tile_owner) in &tiles {
-            if tile_owner.is_some_and(|tile_owner| tile_owner.city_entity != city_entity) {
-                continue;
-            }
-
-            if city_pos.distance(tile_pos) <= stats.border_range {
-                commands.entity(tile_entity).insert(TileOwner {
-                    city_entity,
-                    player_entity: Some(owner.entity),
-                });
-            }
+    let Ok((city_entity, _city, owner, city_pos, stats)) = cities.get(event.entity) else {
+        return;
+    };
+    for (tile_entity, tile_pos, tile_owner) in &tiles {
+        if tile_owner.is_some_and(|tile_owner| tile_owner.city_entity != city_entity) {
+            continue;
         }
 
-        commands.entity(city_entity).remove::<PendingTileClaim>();
+        if city_pos.distance(tile_pos) <= stats.border_range {
+            commands.entity(tile_entity).insert(TileOwner {
+                city_entity,
+                player_entity: Some(owner.entity),
+            });
+        }
     }
 }
 

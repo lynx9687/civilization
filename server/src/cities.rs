@@ -18,9 +18,10 @@ pub const MAX_BORDER_RANGE: i32 = 3;
 pub const POPULATION_PER_BORDER_RANGE: u32 = 3;
 pub const FOOD_GROWTH_MULTIPLIER: i32 = 5;
 
-/// Server-only marker for cities whose border claims need refreshing.
-#[derive(Component)]
-pub struct PendingTileClaim;
+#[derive(EntityEvent)]
+pub struct GrowCity {
+    pub entity: Entity,
+}
 
 /// Spawns a city controlled by `player_id` at the given map tile.
 pub fn spawn_city_at_tile(
@@ -29,7 +30,7 @@ pub fn spawn_city_at_tile(
     player_entity: Entity,
     color_index: u8,
 ) -> Entity {
-    commands
+    let entity = commands
         .spawn((
             City,
             CityStats {
@@ -45,13 +46,10 @@ pub fn spawn_city_at_tile(
                 entity: player_entity,
             },
             ColorIndex(color_index),
-            PendingTileClaim,
         ))
-        .id()
-}
-
-pub fn any_pending_city_claims(cities: Query<(), With<PendingTileClaim>>) -> bool {
-    !cities.is_empty()
+        .id();
+    commands.trigger(GrowCity { entity });
+    entity
 }
 
 pub fn any_city_yields_need_recalculation(

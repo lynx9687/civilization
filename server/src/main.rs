@@ -53,13 +53,13 @@ fn main() {
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_unit_action)
         .add_observer(handle_finish_turn)
+        .add_observer(claim_city_tiles)
         .add_systems(
             Update,
             (
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
-                claim_city_tiles.run_if(any_pending_city_claims),
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 // resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
