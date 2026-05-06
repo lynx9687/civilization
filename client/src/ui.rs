@@ -188,7 +188,7 @@ pub fn update_city_ui(
         return;
     };
 
-    let Ok((city, owner, stats)) = cities.get(city_entity) else {
+    let Ok((_city, owner, stats)) = cities.get(city_entity) else {
         **text = "No city selected".to_string();
         return;
     };
@@ -199,7 +199,7 @@ pub fn update_city_ui(
 
     **text = format!(
         "City {}\nPopulation: {}\nFood: {} (+{})\nProduction: {}\nGold: +{} / owner {}",
-        city.id,
+        city_entity,
         stats.population,
         stats.food,
         stats.food_per_turn,

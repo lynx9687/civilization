@@ -7,9 +7,7 @@ use crate::hex::HexPosition;
 /// Replicated city entity controlled by a player.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
 #[require(Replicated, HexPosition)]
-pub struct City {
-    pub id: u32,
-}
+pub struct City;
 
 /// Replicated economic state for a city.
 #[derive(Component, Serialize, Deserialize, Clone, Debug)]

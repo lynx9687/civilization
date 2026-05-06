@@ -8,7 +8,7 @@ use shared::events::*;
 use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
 
-use crate::cities::{CityCounter, spawn_city_at_tile};
+use crate::cities::spawn_city_at_tile;
 use crate::turn::{PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
@@ -32,7 +32,6 @@ impl ColorCounter {
 #[derive(SystemParam)]
 pub struct NewPlayerSetup<'w> {
     player_map: ResMut<'w, PlayerMap>,
-    city_counter: ResMut<'w, CityCounter>,
     player_state: ResMut<'w, PlayerState>,
 }
 
@@ -105,13 +104,7 @@ pub fn handle_new_clients(
         let x = rand::thread_rng().gen_range(-2..=2);
         let y = rand::thread_rng().gen_range(-2..=2);
         let start_pos = HexPosition::new(x, y);
-        let city_entity = spawn_city_at_tile(
-            &mut commands,
-            &mut setup.city_counter,
-            start_pos,
-            player_entity,
-            color_index,
-        );
+        let city_entity = spawn_city_at_tile(&mut commands, start_pos, player_entity, color_index);
         println!("Spawned city: {city_entity}, for player: {player_entity}");
     }
 }

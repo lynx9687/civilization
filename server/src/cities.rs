@@ -23,30 +23,16 @@ const FOOD_GROWTH_MULTIPLIER: i32 = 5;
 #[derive(Component)]
 pub struct PendingTileClaim;
 
-/// Assigns unique ids to cities.
-#[derive(Resource, Default)]
-pub struct CityCounter(u32);
-
-impl CityCounter {
-    pub fn next_id(&mut self) -> u32 {
-        let res = self.0;
-        self.0 += 1;
-        res
-    }
-}
-
 /// Spawns a city controlled by `player_id` at the given map tile.
 pub fn spawn_city_at_tile(
     commands: &mut Commands,
-    city_counter: &mut CityCounter,
     pos: HexPosition,
     player_entity: Entity,
     color_index: u8,
 ) -> Entity {
-    let city_id = city_counter.next_id();
     commands
         .spawn((
-            City { id: city_id },
+            City,
             CityStats {
                 population: STARTING_POPULATION,
                 food: 0,
