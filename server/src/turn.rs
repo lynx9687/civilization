@@ -361,7 +361,12 @@ mod tests {
             });
 
             // Owning player entity.
-            let player_entity = world.spawn(Player { color_index: 0 }).id();
+            let player_entity = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
 
             // "Client" entity — just a marker entity replicon would have created.
             let client_entity = world.spawn_empty().id();

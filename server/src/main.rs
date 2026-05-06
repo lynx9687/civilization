@@ -62,7 +62,6 @@ fn main() {
                 claim_city_tiles.run_if(any_pending_city_claims),
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 grant_city_gold_if_turn_ready,
-                advance_turn,
                 // resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
                 (
