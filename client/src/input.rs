@@ -23,7 +23,7 @@ pub struct HoveredHex(Option<HexPosition>);
 /// Tracks the local player id and other permanent identity info.
 #[derive(Resource, Default)]
 pub struct Controller {
-    pub player_id: Option<u32>,
+    pub player_entity: Option<Entity>,
 }
 
 /// Selection / targeting state. Drives the action bar visibility and
@@ -71,11 +71,14 @@ pub fn update_hex_highlights(
     units: Query<(&Unit, &HexPosition, &Owner)>,
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
-    players: Query<&Player>,
     controller: Res<Controller>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
+
+    let Some(player_entity) = controller.player_entity else {
+        return;
+    };
 
     // compute the current overlay set based on UiState
     let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match *ui_state {
@@ -98,12 +101,10 @@ pub fn update_hex_highlights(
                 }
                 TargetableVerb::Attack => {
                     // only enemy-occupied hexes within range light up
-                    let local_player = controller.player_id;
                     let attacks = units
                         .iter()
                         .filter_map(|(_, p, owner)| {
-                            let owner_id = players.get(owner.0).ok().map(|pl| pl.player_id);
-                            let is_enemy = owner_id != local_player;
+                            let is_enemy = owner.0 != player_entity;
                             if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
                                 Some(*p)
                             } else {
@@ -141,7 +142,6 @@ pub fn handle_left_click(
     controller: Res<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
-    players: Query<&Player>,
     registry: Res<UnitRegistry>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
@@ -160,15 +160,14 @@ pub fn handle_left_click(
     let Some(target) = get_cursor_hex(&cursor) else {
         return;
     };
-    let Some(player_id) = controller.player_id else {
+    let Some(player_entity) = controller.player_entity else {
         return;
     };
 
     // is the click on one of my owned units?
     let owned_unit_at = |hex: HexPosition| -> Option<Entity> {
         for (entity, _unit, owner, pos) in &units {
-            let owner_id = players.get(owner.0).ok().map(|p| p.player_id);
-            if owner_id == Some(player_id) && *pos == hex {
+            if owner.0 == player_entity && *pos == hex {
                 return Some(entity);
             }
         }
@@ -217,10 +216,9 @@ pub fn handle_left_click(
                 }
                 TargetableVerb::Attack => {
                     // attacker is at `pos`; enemies are units with a different owner_id at `target`
-                    let enemy_here = units.iter().any(|(_, _, owner, p)| {
-                        *p == target
-                            && players.get(owner.0).ok().map(|pl| pl.player_id) != Some(player_id)
-                    });
+                    let enemy_here = units
+                        .iter()
+                        .any(|(_, _, owner, p)| *p == target && owner.0 != player_entity);
                     if is_within_attack_range(pos, &target, def.attack_range) && enemy_here {
                         commands.client_trigger(UnitActionEvent {
                             unit,

@@ -112,7 +112,7 @@ fn on_your_player(
     let color_index = trigger.color_index;
     commands.insert_resource(LocalPlayerColor(color_index));
     println!("Assigned player color index: {color_index}");
-    let player_id = trigger.player_id;
-    println!("Received player_id: {player_id}");
-    controller.player_id = Some(player_id);
+    let player_entity = trigger.player_entity;
+    println!("Received player_entity: {player_entity}");
+    controller.player_entity = Some(player_entity);
 }

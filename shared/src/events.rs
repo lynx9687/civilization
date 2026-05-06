@@ -42,9 +42,10 @@ impl MapEntities for UnitActionEvent {
 }
 
 /// Server-to-client event: tells a client which player is theirs.
-#[derive(Event, Serialize, Deserialize, Clone, Debug)]
+#[derive(Event, Serialize, Deserialize, MapEntities, Clone, Debug)]
 pub struct YourPlayer {
-    pub player_id: u32,
+    #[entities]
+    pub player_entity: Entity,
     pub color_index: u8,
 }
 
