@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use shared::{
     cities::{City, CityOwner, CityStats},
     hex::HexPosition,
+    production::CityProduction,
     tiles::{TileOwner, TileResources},
     units::ColorIndex,
 };
@@ -41,6 +42,7 @@ pub fn spawn_city_at_tile(
                 gold_per_turn: 0,
                 border_range: STARTING_BORDER_RANGE,
             },
+            CityProduction::default(),
             pos,
             CityOwner {
                 entity: player_entity,

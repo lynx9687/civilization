@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::hex::HexPosition;
+use crate::production::ProductionRecipeId;
 use crate::unit_definition::UnitVerb;
 
 /// Single client-to-server event covering all per-unit verbs.
@@ -46,3 +47,18 @@ pub struct YourPlayer {
 /// Client-to-server event: player finished his turn
 #[derive(Event, Serialize, Deserialize)]
 pub struct FinishTurn;
+
+/// Single client-to-server event covering city-level actions.
+/// `city` is mapped by replicon between client-side and server-side Entity ids.
+#[derive(Event, Serialize, Deserialize, MapEntities, Clone, Debug)]
+pub struct CityActionEvent {
+    #[entities]
+    pub city: Entity,
+    pub action: CityAction,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum CityAction {
+    SetProduction { recipe_id: ProductionRecipeId },
+    ClearProduction,
+}

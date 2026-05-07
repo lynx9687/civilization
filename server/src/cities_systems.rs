@@ -1,11 +1,24 @@
 use crate::cities::*;
 use bevy::prelude::*;
+use bevy_replicon::prelude::{ClientId, FromClient};
 use shared::{
     cities::*,
-    components::{HexTile, Player},
+    components::{HexTile, Player, TurnPhase, TurnState},
+    events::{CityAction, CityActionEvent},
     hex::HexPosition,
+    production::{CityProduction, ProductionOutput, RecipeRegistry},
     tiles::*,
+    unit_definition::UnitRegistry,
+    units::{ColorIndex, Health, Owner, Unit},
 };
+
+use crate::players::PlayerMap;
+
+#[derive(EntityEvent)]
+pub struct ProductionCompleted {
+    pub entity: Entity,
+    pub output: ProductionOutput,
+}
 
 /// Applies stored food income and expands borders after population growth during turn resolution
 pub fn grow_city_population(
@@ -47,6 +60,101 @@ pub fn grant_city_gold(
         };
         player.gold += stats.gold_per_turn;
     }
+}
+
+pub fn handle_city_action(
+    trigger: On<FromClient<CityActionEvent>>,
+    player_map: Res<PlayerMap>,
+    recipes: Res<RecipeRegistry>,
+    turn_state: Query<&TurnState>,
+    mut cities: Query<(&CityOwner, &mut CityProduction), With<City>>,
+) {
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+
+    let client_entity = match trigger.client_id {
+        ClientId::Client(entity) => entity,
+        ClientId::Server => return,
+    };
+    let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+
+    let Ok((owner, mut production)) = cities.get_mut(trigger.message.city) else {
+        return;
+    };
+    if owner.entity != *player_entity {
+        return;
+    }
+
+    match trigger.message.action {
+        CityAction::SetProduction { recipe_id } => {
+            let Some(recipe) = recipes.get(&recipe_id) else {
+                println!("Rejected city production: unknown recipe {recipe_id:?}");
+                return;
+            };
+            production.recipe = Some(*recipe);
+            production.accumulated = 0;
+        }
+        CityAction::ClearProduction => {
+            production.recipe = None;
+            production.accumulated = 0;
+        }
+    }
+}
+
+/// Advances selected city production and emits a completion event for finished recipes.
+pub fn advance_city_production(
+    mut commands: Commands,
+    mut cities: Query<(Entity, &CityStats, &mut CityProduction), With<City>>,
+) {
+    for (entity, stats, mut production) in &mut cities {
+        let Some(recipe) = production.recipe else {
+            continue;
+        };
+
+        production.accumulated = production
+            .accumulated
+            .saturating_add(stats.production.max(0) as u32);
+        if production.accumulated < recipe.cost {
+            continue;
+        }
+
+        production.recipe = None;
+        production.accumulated = 0;
+        commands.trigger(ProductionCompleted {
+            entity,
+            output: recipe.output,
+        });
+    }
+}
+
+pub fn complete_unit_production(
+    event: On<ProductionCompleted>,
+    mut commands: Commands,
+    cities: Query<(&CityOwner, &HexPosition, &ColorIndex), With<City>>,
+    registry: Res<UnitRegistry>,
+) {
+    let ProductionOutput::Unit { type_id } = event.output;
+    let Ok((owner, pos, color)) = cities.get(event.entity) else {
+        return;
+    };
+    let Some(definition) = registry.get(&type_id) else {
+        println!("Completed production for unknown unit type {type_id:?}");
+        return;
+    };
+
+    commands.spawn((
+        Unit { type_id },
+        *pos,
+        Owner(owner.entity),
+        ColorIndex(color.0),
+        Health::full(definition.hp),
+    ));
 }
 
 /// Claims every tile inside each city's current border range.

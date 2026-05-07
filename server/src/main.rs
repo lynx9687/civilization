@@ -52,8 +52,10 @@ fn main() {
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_unit_action)
+        .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
         .add_observer(claim_city_tiles)
+        .add_observer(complete_unit_production)
         .add_systems(
             Update,
             (
@@ -71,6 +73,7 @@ fn main() {
                     resolve_fortify,
                     resolve_skip,
                     resolve_builds,
+                    advance_city_production,
                     advance_turn,
                 )
                     .chain()
