@@ -63,6 +63,7 @@ fn main() {
                 update_unit_positions,
                 update_hex_highlights,
                 handle_left_click,
+                handle_right_click,
                 handle_escape_key,
                 prune_stale_selection,
                 reset_submission_on_new_turn,

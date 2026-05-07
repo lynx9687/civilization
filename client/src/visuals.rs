@@ -9,7 +9,7 @@ use shared::{
 
 use crate::HEX_SIZE;
 
-const SQUARE_SIZE: f32 = 20.0;
+const SQUARE_SIZE: f32 = 18.0;
 const CITY_SIZE: f32 = 28.0;
 const UNIT_MOVE_SPEED: f32 = 300.0;
 
@@ -89,26 +89,25 @@ pub fn spawn_unit_visuals(
         commands.entity(entity).insert((
             Mesh2d(mesh_handle),
             MeshMaterial2d(materials.add(color)),
-            Transform::from_xyz(pixel.x, pixel.y, 1.0),
+            Transform::from_xyz(pixel.x, pixel.y, 2.0),
         ));
     }
 }
 
 pub fn spawn_city_visuals(
-    cities: Query<(Entity, &ColorIndex, &HexPosition), Added<City>>,
+    cities: Query<(Entity, &HexPosition), Added<City>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    for (entity, color_index, pos) in &cities {
+    for (entity, pos) in &cities {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
-        let color = player_color(color_index.0);
         println!("Adding city: {entity}, at pixel {pixel}");
         commands.entity(entity).insert((
-            Mesh2d(meshes.add(RegularPolygon::new(CITY_SIZE, 4))),
-            MeshMaterial2d(materials.add(color)),
-            Transform::from_xyz(pixel.x, pixel.y, 2.0)
-                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)),
+            Mesh2d(meshes.add(RegularPolygon::new(CITY_SIZE, 6))),
+            MeshMaterial2d(materials.add(Color::srgb(0.3, 0.3, 0.3))),
+            Transform::from_xyz(pixel.x, pixel.y, 1.0)
+                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_6)),
         ));
     }
 }

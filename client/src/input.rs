@@ -160,10 +160,9 @@ pub fn handle_left_click(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
+    controller: Res<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
-    cities: Query<(Entity, &HexPosition), With<City>>,
     registry: Res<UnitRegistry>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
@@ -195,17 +194,6 @@ pub fn handle_left_click(
         }
         None
     };
-
-    // handle clicking city
-    for (city_entity, pos) in cities {
-        if *pos == target {
-            // controller.selected_unit = None;
-            *ui_state = UiState::Idle;
-            controller.selected_city = Some(city_entity);
-            println!("Selected city {city_entity}");
-            return;
-        }
-    }
 
     match *ui_state {
         UiState::Idle => {
@@ -263,6 +251,46 @@ pub fn handle_left_click(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Allows selecting both unit/city when they are on the same tile. This is a temporary solution
+/// Better handling of user input / gui should be considered in the future
+pub fn handle_right_click(
+    mouse: Res<ButtonInput<MouseButton>>,
+    cursor: CursorWorld,
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+    mut controller: ResMut<Controller>,
+    mut ui_state: ResMut<UiState>,
+    cities: Query<(Entity, &HexPosition), With<City>>,
+) {
+    if !mouse.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
+
+    let Some(target) = get_cursor_hex(&cursor) else {
+        return;
+    };
+
+    // handle clicking city
+    for (city_entity, pos) in cities {
+        if *pos == target {
+            // controller.selected_unit = None;
+            *ui_state = UiState::Idle;
+            controller.selected_city = Some(city_entity);
+            println!("Selected city {city_entity}");
+            return;
         }
     }
 }
