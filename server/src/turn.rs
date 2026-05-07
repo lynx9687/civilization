@@ -218,8 +218,8 @@ pub fn resolve_builds(
             commands.entity(entity).despawn();
         } else {
             println!("(stub) build {} on {entity:?}", build.name);
+            commands.entity(entity).remove::<BuildProject>();
         }
-        commands.entity(entity).remove::<BuildProject>();
     }
 }
 
@@ -486,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_builds_removes_marker() {
+    fn test_resolve_builds_removes_settler() {
         use bevy::prelude::*;
         use shared::hex::HexPosition;
         use shared::unit_definition::UnitTypeId;
@@ -494,6 +494,13 @@ mod tests {
 
         let mut app = App::new();
         app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
         let entity = app
             .world_mut()
             .spawn((
@@ -504,6 +511,42 @@ mod tests {
                 BuildProject {
                     name: "city".into(),
                 },
+                Owner(player),
+                ColorIndex(0),
+            ))
+            .id();
+        app.update();
+        assert!(!app.world().entities().contains(entity));
+    }
+
+    #[test]
+    fn test_resolve_builds_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                BuildProject {
+                    name: "other".into(),
+                },
+                Owner(player),
+                ColorIndex(0),
             ))
             .id();
         app.update();
