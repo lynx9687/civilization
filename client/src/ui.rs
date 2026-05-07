@@ -320,17 +320,20 @@ fn format_recipe_progress(
 
 pub fn update_production_bar(
     controller: Res<Controller>,
+    cities: Query<&CityOwner, With<City>>,
     mut bars: Query<&mut Node, With<ProductionBar>>,
 ) {
     if !controller.is_changed() {
         return;
     }
+
+    let show = controller
+        .selected_city
+        .and_then(|city| cities.get(city).ok())
+        .is_some_and(|owner| Some(owner.entity) == controller.player_entity);
+
     for mut node in &mut bars {
-        node.display = if controller.selected_city.is_some() {
-            Display::Flex
-        } else {
-            Display::None
-        };
+        node.display = if show { Display::Flex } else { Display::None };
     }
 }
 

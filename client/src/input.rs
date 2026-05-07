@@ -160,7 +160,7 @@ pub fn handle_left_click(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    controller: Res<Controller>,
+    mut controller: ResMut<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     registry: Res<UnitRegistry>,
@@ -198,11 +198,13 @@ pub fn handle_left_click(
     match *ui_state {
         UiState::Idle => {
             if let Some(entity) = owned_unit_at(target) {
+                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
             }
         }
         UiState::UnitSelected { unit: _ } => {
             if let Some(entity) = owned_unit_at(target) {
+                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
             } else {
                 *ui_state = UiState::Idle;
@@ -211,6 +213,7 @@ pub fn handle_left_click(
         UiState::Targeting { unit, verb } => {
             // clicking another owned unit always switches selection
             if let Some(entity) = owned_unit_at(target) {
+                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
                 return;
             }
