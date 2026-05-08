@@ -149,24 +149,34 @@ The `resolve_movement` algorithm consumes `Vec<UnitSnapshot>` and returns `Comba
 
 ### `resolve_attacks` — pre-movement, deterministic order
 
-```
-sort attackers by entity id   // determinism
-for attacker in attackers:
-    consume Fortified marker on attacker  // Attack always strips Fortified
-    let def = registry.get(attacker.unit.type_id)
-    let target = the LIVE unit at AttackTarget.pos right now (if any)
-    if target is None:
-        consume AttackTarget marker, continue
-        // Target may have died from an earlier attack in this same loop
-        // (concentrated-fire case). Submit-time validation already ensured
-        // a target was there at submit; nothing else lets the tile go empty.
-    let target_is_defender = target.has_Fortified
-                          && target has none of {MoveTo, AttackTarget, Skipping, BuildProject}
-    target.hp -= damage_taken(def.attack_damage, target_is_defender)
-    if def.attack_range == 1:           // melee: counter
+```rust
+// Pseudocode — final code uses real Bevy queries.
+let mut attackers: Vec<_> = collect_attackers();
+attackers.sort_by_key(|a| a.entity);   // determinism
+
+for attacker in attackers {
+    strip_fortified(attacker.entity);  // Attack always strips Fortified
+
+    let def = registry.get(attacker.unit.type_id);
+    let target = live_unit_at(attacker.attack_target.pos);
+    let Some(target) = target else {
+        consume_attack_target(attacker.entity);
+        continue;  // Target died from an earlier attack in this loop
+                   // (concentrated-fire). Submit-time validation already
+                   // ensured a target was there at submit.
+    };
+
+    let target_is_defender = target.has::<Fortified>()
+        && !target.has_any_of::<(MoveTo, AttackTarget, Skipping, BuildProject)>();
+
+    target.hp -= damage_taken(def.attack_damage, target_is_defender);
+
+    if def.attack_range == 1 {
         // Attacker took an action (Attack), so no Fortified bonus on counter.
-        attacker.hp -= damage_taken(target.attack_damage, false)
-    consume AttackTarget marker
+        attacker.hp -= damage_taken(target.attack_damage, false);
+    }
+    consume_attack_target(attacker.entity);
+}
 ```
 
 A unit can be killed by an earlier attacker in the loop, in which case later attackers find no live unit at the target tile and waste their action. This is acceptable: attacks were submitted assuming a target was there; attrition between simultaneous attackers is expected.
@@ -175,59 +185,78 @@ Note on the defender check: `target has none of {MoveTo, AttackTarget, Skipping,
 
 ### `resolve_movement` — the iterating conflict-and-rollback algorithm
 
-```
-fn resolve_movement(units: Vec<UnitSnapshot>) -> CombatDeltas:
-    // Working state, mutable.
-    positions: map<Entity, HexPosition>
-    hps:       map<Entity, i32>
-    deaths:    set<Entity>
+```rust
+// Pseudocode — pure function, no Bevy types.
+fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
+    let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
+    let mut hps:       HashMap<Entity, i32>         = HashMap::new();
+    let mut deaths:    HashSet<Entity>              = HashSet::new();
 
-    // Initialize: every unit starts at its desired position.
-    for u in units where u.hp > 0:
-        positions[u.entity] = match u.action:
-            Stationary  => u.start_pos
-            MoveTo(t)   => t
-        hps[u.entity] = u.hp
+    // Initialize: every live unit starts at its desired position.
+    for u in &units {
+        if u.hp <= 0 { continue; }
+        let desired = match u.action {
+            ResolveAction::Stationary  => u.start_pos,
+            ResolveAction::MoveTo(t)   => t,
+        };
+        positions.insert(u.entity, desired);
+        hps.insert(u.entity, u.hp);
+    }
 
-    loop:
-        T = any tile with 2+ live units in `positions`
-        if T is None: break
+    let mut iter_count = 0;
+    loop {
+        iter_count += 1;
+        assert!(iter_count < 256, "rollback chain failed to terminate");
 
-        combatants = live units at T
+        let Some(tile) = first_tile_with_multiple_live_units(&positions, &deaths) else {
+            break;
+        };
+        let combatants = live_units_at(tile, &positions, &deaths, &units);
 
         // All-vs-all simultaneous melee damage exchange.
-        // Every unit at T deals attack_damage to every other unit at T.
-        for u in combatants:
-            raw = sum of v.attack_damage for v in combatants where v != u
-            is_defender = u.fortified_defender
-                       && u.action == Stationary
-                       && u.start_pos == T   // didn't move into T; was already here
-            taken = damage_taken(raw, is_defender)
-            hps[u.entity] -= taken
+        // Each unit takes the sum of every other combatant's attack_damage,
+        // halved if this unit is a stationary fortified defender.
+        for u in &combatants {
+            let raw: u32 = combatants.iter()
+                .filter(|v| v.entity != u.entity)
+                .map(|v| v.attack_damage)
+                .sum();
+            let is_defender = u.fortified_defender
+                && matches!(u.action, ResolveAction::Stationary)
+                && u.start_pos == tile;
+            let taken = damage_taken(raw, is_defender);
+            *hps.get_mut(&u.entity).unwrap() -= taken as i32;
+        }
 
         // Apply this round's deaths.
-        for u in combatants:
-            if hps[u.entity] <= 0:
-                deaths.insert(u.entity)
+        for u in &combatants {
+            if hps[&u.entity] <= 0 {
+                deaths.insert(u.entity);
+            }
+        }
 
-        survivors = combatants \ deaths
+        let survivors: Vec<_> = combatants.iter()
+            .filter(|u| !deaths.contains(&u.entity))
+            .collect();
 
-        if survivors.len() <= 1:
-            // 0 or 1 alive — tile settled.
-            // Sole survivor (if any) is already at T in `positions`. No change.
-            // Dead units stay tagged in `deaths`; they'll be ignored by future
-            // conflict detection (live units only).
-        else:
+        if survivors.len() > 1 {
             // 2+ alive — all rollback to start_pos.
-            // Home unit (start_pos == T) effectively stays.
-            for s in survivors:
-                positions[s.entity] = s.start_pos
+            // Home unit (start_pos == tile) stays automatically (no-op rollback).
+            for s in &survivors {
+                positions.insert(s.entity, s.start_pos);
+            }
+        }
+        // 0 or 1 alive — tile settled. Sole survivor (if any) is already at
+        // `tile` in `positions`. Dead units stay tagged in `deaths`; they're
+        // ignored by future conflict detection.
+    }
 
-    return CombatDeltas {
-        hp_changes: per-entity (final_hp - initial_hp),
+    CombatDeltas {
+        hp_changes: hp_deltas_against_initial(&hps, &units),
         final_positions: positions,
         deaths,
     }
+}
 ```
 
 #### Termination
