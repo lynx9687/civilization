@@ -20,7 +20,7 @@ pub struct UnitSnapshot {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResolveAction {
-    /// No movement this turn. Constructed in Task 5.
+    /// No movement this turn. Used in tests; production systems added in a later task.
     #[allow(dead_code)]
     Stationary,
     /// Move to this destination. Triggers melee combat if an enemy ends up there too.
@@ -39,14 +39,18 @@ pub struct CombatDeltas {
 /// Pure combat resolver. Expanded task by task.
 #[allow(dead_code)]
 pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
-    // Initial state: every live unit at its desired position.
     let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
     let mut hps: HashMap<Entity, i32> = HashMap::new();
+    let mut deaths: HashSet<Entity> = HashSet::new();
+
     let initial_hps: HashMap<Entity, i32> = units
         .iter()
         .filter(|u| u.hp > 0)
         .map(|u| (u.entity, u.hp))
         .collect();
+
+    // Index snapshot by entity for fast lookup later.
+    let by_entity: HashMap<Entity, &UnitSnapshot> = units.iter().map(|u| (u.entity, u)).collect();
 
     for u in &units {
         if u.hp <= 0 {
@@ -60,8 +64,69 @@ pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
         hps.insert(u.entity, u.hp);
     }
 
-    let deaths: HashSet<Entity> = HashSet::new();
+    // Iterate: detect conflicts, fight, rollback, repeat until stable.
+    let mut iter_count = 0_u32;
+    loop {
+        iter_count += 1;
+        assert!(iter_count < 256, "rollback chain failed to terminate");
 
+        // Find first tile with 2+ live units.
+        let mut by_tile: HashMap<HexPosition, Vec<Entity>> = HashMap::new();
+        for (&e, &p) in &positions {
+            if deaths.contains(&e) {
+                continue;
+            }
+            by_tile.entry(p).or_default().push(e);
+        }
+        let conflict_tile = by_tile
+            .iter()
+            .find(|(_, list)| list.len() >= 2)
+            .map(|(p, _)| *p);
+        let Some(tile) = conflict_tile else {
+            break;
+        };
+        let combatants: Vec<Entity> = by_tile.get(&tile).cloned().unwrap_or_default();
+
+        // All-vs-all simultaneous damage.
+        // Each combatant takes the sum of every other combatant's attack_damage.
+        let damages_to_take: HashMap<Entity, i32> = combatants
+            .iter()
+            .map(|&e| {
+                let raw: u32 = combatants
+                    .iter()
+                    .filter(|&&v| v != e)
+                    .map(|&v| by_entity[&v].attack_damage)
+                    .sum();
+                (e, raw as i32)
+            })
+            .collect();
+        for (&e, &dmg) in &damages_to_take {
+            *hps.get_mut(&e).unwrap() -= dmg;
+        }
+
+        // Apply this round's deaths.
+        for &e in &combatants {
+            if hps[&e] <= 0 {
+                deaths.insert(e);
+            }
+        }
+
+        let survivors: Vec<Entity> = combatants
+            .iter()
+            .copied()
+            .filter(|e| !deaths.contains(e))
+            .collect();
+
+        if survivors.len() > 1 {
+            // 2+ alive — all rollback to start_pos. Home unit's rollback is a no-op.
+            for s in &survivors {
+                positions.insert(*s, by_entity[s].start_pos);
+            }
+        }
+        // 0 or 1 alive: tile settled. Sole survivor (if any) is already at `tile`.
+    }
+
+    // Build hp_changes (delta) from initial.
     let hp_changes: HashMap<Entity, i32> = hps
         .iter()
         .filter_map(|(e, &h)| {
@@ -96,6 +161,52 @@ mod tests {
         let deltas = resolve_movement_pure(vec![]);
         assert!(deltas.hp_changes.is_empty());
         assert!(deltas.final_positions.is_empty());
+        assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
+    fn two_way_conflict_both_alive_rolls_back() {
+        let (_world, entities) = fake_entities(2);
+        let p1 = Entity::PLACEHOLDER;
+        let p2 = Entity::PLACEHOLDER;
+        // A at (0,0) moves to (1,0); B at (1,0) is stationary.
+        let snapshot = vec![
+            UnitSnapshot {
+                entity: entities[0],
+                owner: p1,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: HexPosition::new(0, 0),
+                action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
+            },
+            UnitSnapshot {
+                entity: entities[1],
+                owner: p2,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: HexPosition::new(1, 0),
+                action: ResolveAction::Stationary,
+            },
+        ];
+
+        let deltas = resolve_movement_pure(snapshot);
+
+        // Both alive → both rolled back to start. A back to (0,0), B stays at (1,0).
+        assert_eq!(
+            deltas.final_positions.get(&entities[0]),
+            Some(&HexPosition::new(0, 0))
+        );
+        assert_eq!(
+            deltas.final_positions.get(&entities[1]),
+            Some(&HexPosition::new(1, 0))
+        );
+        // Each took 4 damage.
+        assert_eq!(deltas.hp_changes.get(&entities[0]), Some(&-4));
+        assert_eq!(deltas.hp_changes.get(&entities[1]), Some(&-4));
         assert!(deltas.deaths.is_empty());
     }
 
