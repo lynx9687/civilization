@@ -420,6 +420,46 @@ mod tests {
     }
 
     #[test]
+    fn move_into_enemy_misses_when_defender_vacated() {
+        let (_world, entities) = fake_entities(2);
+        let p = Entity::PLACEHOLDER;
+        // A moves T1→T2 hoping to hit B; B moves T2→T3, vacating T2.
+        let t1 = HexPosition::new(0, 0);
+        let t2 = HexPosition::new(1, 0);
+        let t3 = HexPosition::new(2, 0);
+        let snapshot = vec![
+            UnitSnapshot {
+                entity: entities[0],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: t1,
+                action: ResolveAction::MoveTo(t2),
+            },
+            UnitSnapshot {
+                entity: entities[1],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: t2,
+                action: ResolveAction::MoveTo(t3),
+            },
+        ];
+
+        let deltas = resolve_movement_pure(snapshot);
+
+        // No conflict ever forms; both units end up at their destinations.
+        assert_eq!(deltas.final_positions.get(&entities[0]), Some(&t2));
+        assert_eq!(deltas.final_positions.get(&entities[1]), Some(&t3));
+        assert!(deltas.hp_changes.is_empty(), "no combat happened");
+        assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
     fn single_mover_lands_at_destination() {
         let (_world, entities) = fake_entities(1);
         let player = Entity::PLACEHOLDER;
