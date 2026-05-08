@@ -87,6 +87,7 @@ pub fn handle_unit_action(
     player_map: Res<PlayerMap>,
     units: Query<(&HexPosition, &Owner, &Unit)>,
     enemy_units: Query<(&HexPosition, &Owner), With<Unit>>,
+    queued_moves: Query<(&MoveTo, &Owner), With<Unit>>, // for same-turn collision detection
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
 ) {
@@ -135,6 +136,22 @@ pub fn handle_unit_action(
             }
             if !target.in_bounds(GRID_RADIUS) {
                 println!("Rejected move: out of bounds");
+                return;
+            }
+            // Reject if a friendly is currently standing on the target tile.
+            if units
+                .iter()
+                .any(|(p, o, _)| p == target && o.0 == *player_entity)
+            {
+                println!("Rejected move: friendly already on tile");
+                return;
+            }
+            // Reject if another friendly already queued a Move to the same tile this turn.
+            if queued_moves
+                .iter()
+                .any(|(mv, o)| mv.pos == *target && o.0 == *player_entity)
+            {
+                println!("Rejected move: tile already targeted by another friendly");
                 return;
             }
             queue_marker(&mut commands, entity, MoveTo { pos: *target });
@@ -706,5 +723,223 @@ mod tests {
     fn city_count(app: &mut App) -> usize {
         let mut cities = app.world_mut().query_filtered::<Entity, With<City>>();
         cities.iter(app.world()).count()
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_move_to_friendly_occupied_tile() {
+        use crate::players::PlayerMap;
+        use bevy::app::ScheduleRunnerPlugin;
+        use bevy::state::app::StatesPlugin;
+        use bevy_replicon::prelude::*;
+        use shared::components::*;
+        use shared::events::*;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        // Minimal warrior registry.
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, player, mover, blocker) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+
+            // Two friendly warriors. Mover at (0, 0), blocker at (1, 0).
+            let mover = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            let blocker = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(1, 0),
+                    Owner(player),
+                ))
+                .id();
+            (client, player, mover, blocker)
+        };
+
+        // Try to move mover onto blocker's tile.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit: mover,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+
+        // Move must be rejected: no MoveTo on the mover.
+        assert!(
+            app.world().get::<MoveTo>(mover).is_none(),
+            "Move to friendly-occupied tile must be rejected"
+        );
+        let _ = (player, blocker);
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_move_to_tile_with_queued_friendly_move() {
+        use crate::players::PlayerMap;
+        use bevy::app::ScheduleRunnerPlugin;
+        use bevy::state::app::StatesPlugin;
+        use bevy_replicon::prelude::*;
+        use shared::components::*;
+        use shared::events::*;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, _player, first, second) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+
+            // Two friendly warriors at distinct tiles, both able to reach (2, 0).
+            let first = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(1, 0),
+                    Owner(player),
+                ))
+                .id();
+            let second = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(3, 0),
+                    Owner(player),
+                ))
+                .id();
+            (client, player, first, second)
+        };
+
+        // First friendly queues Move to (2, 0). Should succeed.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit: first,
+                action: UnitAction::Move {
+                    target: HexPosition::new(2, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(first).is_some(),
+            "First friendly's Move should be accepted"
+        );
+
+        // Second friendly queues Move to the same tile. Should be rejected.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit: second,
+                action: UnitAction::Move {
+                    target: HexPosition::new(2, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(second).is_none(),
+            "Second friendly's Move to a tile already targeted must be rejected"
+        );
     }
 }
