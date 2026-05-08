@@ -254,6 +254,40 @@ mod tests {
     }
 
     #[test]
+    fn two_way_conflict_both_die_tile_empty() {
+        let (_world, entities) = fake_entities(2);
+        let p = Entity::PLACEHOLDER;
+        // Each does 10 damage, both have 8 HP.
+        let snapshot = vec![
+            UnitSnapshot {
+                entity: entities[0],
+                owner: p,
+                hp: 8,
+                max_hp: 8,
+                attack_damage: 10,
+                attack_range: 1,
+                start_pos: HexPosition::new(0, 0),
+                action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
+            },
+            UnitSnapshot {
+                entity: entities[1],
+                owner: p,
+                hp: 8,
+                max_hp: 8,
+                attack_damage: 10,
+                attack_range: 1,
+                start_pos: HexPosition::new(1, 0),
+                action: ResolveAction::Stationary,
+            },
+        ];
+
+        let deltas = resolve_movement_pure(snapshot);
+
+        assert!(deltas.deaths.contains(&entities[0]));
+        assert!(deltas.deaths.contains(&entities[1]));
+    }
+
+    #[test]
     fn single_mover_lands_at_destination() {
         let (_world, entities) = fake_entities(1);
         let player = Entity::PLACEHOLDER;
