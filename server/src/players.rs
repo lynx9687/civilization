@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use rand::Rng;
@@ -27,26 +28,39 @@ impl ColorCounter {
     }
 }
 
+#[derive(SystemParam)]
+pub struct NewPlayerSetup<'w> {
+    player_map: ResMut<'w, PlayerMap>,
+    player_state: ResMut<'w, PlayerState>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
     mut commands: Commands,
-    mut player_map: ResMut<PlayerMap>,
     mut color_counter: ResMut<ColorCounter>,
     registry: Res<UnitRegistry>,
-    mut player_state: ResMut<PlayerState>,
+    mut setup: NewPlayerSetup,
 ) {
     for client_entity in &new_clients {
         let color_index = color_counter.next_index();
         let player_entity = commands
-            .spawn((Player { color_index }, HexPosition::new(0, 0)))
+            .spawn((
+                Player {
+                    color_index,
+                    gold: 0,
+                },
+                HexPosition::new(0, 0),
+            ))
             .id();
 
-        player_map
+        setup
+            .player_map
             .client_to_player
             .insert(client_entity, player_entity);
 
-        player_state
+        setup
+            .player_state
             .turn
             .insert(client_entity, crate::turn::PlayerTurnState::InProgress);
 

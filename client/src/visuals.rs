@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use shared::{
+    cities::City,
     components::*,
     hex::{HexPosition, hex_to_pixel},
     unit_definition::UnitRegistry,
@@ -8,7 +9,8 @@ use shared::{
 
 use crate::HEX_SIZE;
 
-const SQUARE_SIZE: f32 = 20.0;
+const SQUARE_SIZE: f32 = 18.0;
+const CITY_SIZE: f32 = 28.0;
 const UNIT_MOVE_SPEED: f32 = 300.0;
 
 /// Handles to shared hex materials for highlighting.
@@ -17,6 +19,7 @@ pub struct HexMaterials {
     pub default: Handle<ColorMaterial>,
     pub hovered: Handle<ColorMaterial>,
     pub valid_move: Handle<ColorMaterial>,
+    pub claimed: Vec<Handle<ColorMaterial>>,
     pub valid_attack: Handle<ColorMaterial>,
 }
 
@@ -27,6 +30,16 @@ pub fn setup_camera(mut commands: Commands, mut materials: ResMut<Assets<ColorMa
         default: materials.add(Color::srgb(0.15, 0.15, 0.2)),
         hovered: materials.add(Color::srgb(0.3, 0.3, 0.4)),
         valid_move: materials.add(Color::srgb(0.2, 0.4, 0.2)),
+        claimed: vec![
+            materials.add(Color::srgb(0.35, 0.12, 0.12)),
+            materials.add(Color::srgb(0.10, 0.16, 0.36)),
+            materials.add(Color::srgb(0.10, 0.30, 0.12)),
+            materials.add(Color::srgb(0.36, 0.32, 0.10)),
+            materials.add(Color::srgb(0.34, 0.12, 0.34)),
+            materials.add(Color::srgb(0.10, 0.32, 0.34)),
+            materials.add(Color::srgb(0.36, 0.22, 0.10)),
+            materials.add(Color::srgb(0.22, 0.12, 0.36)),
+        ],
         valid_attack: materials.add(Color::srgb(0.5, 0.15, 0.15)),
     };
     commands.insert_resource(hex_materials);
@@ -76,7 +89,25 @@ pub fn spawn_unit_visuals(
         commands.entity(entity).insert((
             Mesh2d(mesh_handle),
             MeshMaterial2d(materials.add(color)),
-            Transform::from_xyz(pixel.x, pixel.y, 1.0),
+            Transform::from_xyz(pixel.x, pixel.y, 2.0),
+        ));
+    }
+}
+
+pub fn spawn_city_visuals(
+    cities: Query<(Entity, &HexPosition), Added<City>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    for (entity, pos) in &cities {
+        let pixel = hex_to_pixel(pos, HEX_SIZE);
+        println!("Adding city: {entity}, at pixel {pixel}");
+        commands.entity(entity).insert((
+            Mesh2d(meshes.add(RegularPolygon::new(CITY_SIZE, 6))),
+            MeshMaterial2d(materials.add(Color::srgb(0.3, 0.3, 0.3))),
+            Transform::from_xyz(pixel.x, pixel.y, 1.0)
+                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_6)),
         ));
     }
 }

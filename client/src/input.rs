@@ -3,9 +3,11 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::unit_definition::{UnitRegistry, is_within_attack_range, is_within_move_range};
 use shared::{
+    cities::City,
     components::*,
     events::*,
     hex::{HexPosition, pixel_to_hex},
+    tiles::TileOwner,
     units::*,
 };
 
@@ -24,6 +26,7 @@ pub struct HoveredHex(Option<HexPosition>);
 #[derive(Resource, Default)]
 pub struct Controller {
     pub player_entity: Option<Entity>,
+    pub selected_city: Option<Entity>,
 }
 
 /// Selection / targeting state. Drives the action bar visibility and
@@ -53,6 +56,17 @@ pub struct CursorWorld<'w, 's> {
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<Camera2d>>,
 }
 
+type TileHighlightQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static HexPosition,
+        Option<&'static TileOwner>,
+        &'static mut MeshMaterial2d<ColorMaterial>,
+    ),
+    With<HexTile>,
+>;
+
 fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
     let window = cursor.windows.single().ok()?;
     let (camera, transform) = cursor.cameras.single().ok()?;
@@ -64,7 +78,7 @@ fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
 #[allow(clippy::too_many_arguments)]
 pub fn update_hex_highlights(
     cursor: CursorWorld,
-    mut tiles: Query<(&HexPosition, &mut MeshMaterial2d<ColorMaterial>), With<HexTile>>,
+    mut tiles: TileHighlightQuery,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
     ui_state: Res<UiState>,
@@ -72,6 +86,7 @@ pub fn update_hex_highlights(
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
     controller: Res<Controller>,
+    players: Query<&Player>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
@@ -119,13 +134,19 @@ pub fn update_hex_highlights(
         _ => (Vec::new(), Vec::new()),
     };
 
-    for (pos, mut material) in &mut tiles {
+    for (pos, owner, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
             *material = MeshMaterial2d(hex_materials.hovered.clone());
         } else if attack_targets.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_attack.clone());
         } else if move_targets.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_move.clone());
+        } else if let Some(tile_owning_player) = owner.and_then(|x| x.player_entity) {
+            let Ok(owning_player) = players.get(tile_owning_player) else {
+                continue;
+            };
+            *material =
+                MeshMaterial2d(hex_materials.claimed[owning_player.color_index as usize].clone());
         } else {
             *material = MeshMaterial2d(hex_materials.default.clone());
         }
@@ -139,7 +160,7 @@ pub fn handle_left_click(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    controller: Res<Controller>,
+    mut controller: ResMut<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     registry: Res<UnitRegistry>,
@@ -177,11 +198,13 @@ pub fn handle_left_click(
     match *ui_state {
         UiState::Idle => {
             if let Some(entity) = owned_unit_at(target) {
+                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
             }
         }
         UiState::UnitSelected { unit: _ } => {
             if let Some(entity) = owned_unit_at(target) {
+                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
             } else {
                 *ui_state = UiState::Idle;
@@ -190,6 +213,7 @@ pub fn handle_left_click(
         UiState::Targeting { unit, verb } => {
             // clicking another owned unit always switches selection
             if let Some(entity) = owned_unit_at(target) {
+                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
                 return;
             }
@@ -230,6 +254,46 @@ pub fn handle_left_click(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Allows selecting both unit/city when they are on the same tile. This is a temporary solution
+/// Better handling of user input / gui should be considered in the future
+pub fn handle_right_click(
+    mouse: Res<ButtonInput<MouseButton>>,
+    cursor: CursorWorld,
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+    mut controller: ResMut<Controller>,
+    mut ui_state: ResMut<UiState>,
+    cities: Query<(Entity, &HexPosition), With<City>>,
+) {
+    if !mouse.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
+
+    let Some(target) = get_cursor_hex(&cursor) else {
+        return;
+    };
+
+    // handle clicking city
+    for (city_entity, pos) in cities {
+        if *pos == target {
+            // controller.selected_unit = None;
+            *ui_state = UiState::Idle;
+            controller.selected_city = Some(city_entity);
+            println!("Selected city {city_entity}");
+            return;
         }
     }
 }
