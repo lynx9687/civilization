@@ -1,7 +1,9 @@
 // Types and function are stubs; future tasks will wire them into ECS systems.
 
-use bevy::prelude::Entity;
+use bevy::prelude::*;
 use shared::hex::HexPosition;
+use shared::unit_definition::UnitRegistry;
+use shared::units::{AttackTarget, Health, Unit};
 use std::collections::{HashMap, HashSet};
 
 /// One row per live unit, gathered by the wrapper system before calling the algorithm.
@@ -143,10 +145,56 @@ pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
     }
 }
 
+/// Pre-movement phase: each ranged unit with an AttackTarget hits the live unit
+/// at the target tile (if any) for `attack_damage`, with no counter and no movement.
+/// Submit-time validation already guaranteed an enemy was at the tile at submit;
+/// a missing target here means concentrated-fire killed it earlier in this loop,
+/// or the marker survived a target despawn — either way the attack is wasted.
+#[allow(dead_code)] // wired into main.rs system chain in Task 14
+pub fn resolve_ranged_attacks(
+    attackers: Query<(Entity, &Unit, &AttackTarget)>,
+    // Health excluded here to avoid conflicting borrows with hp_q below;
+    // liveness is checked via hp_q after we find the candidate by position.
+    unit_positions: Query<(Entity, &HexPosition), With<Unit>>,
+    registry: Res<UnitRegistry>,
+    mut hp_q: Query<&mut Health>,
+    mut commands: Commands,
+) {
+    let mut acts: Vec<_> = attackers.iter().collect();
+    acts.sort_by_key(|(e, _, _)| *e);
+
+    for (attacker_entity, unit, attack_target) in acts {
+        let Some(def) = registry.get(&unit.type_id) else {
+            commands.entity(attacker_entity).remove::<AttackTarget>();
+            continue;
+        };
+        if def.attack_range <= 1 {
+            // Melee Attack should have been gated out by available_verbs;
+            // safety net: just consume the marker.
+            commands.entity(attacker_entity).remove::<AttackTarget>();
+            continue;
+        }
+
+        // Find the live unit at the target tile.
+        let target_entity = unit_positions
+            .iter()
+            .find(|(e, p)| {
+                **p == attack_target.pos && hp_q.get(*e).map(|h| h.current > 0).unwrap_or(false)
+            })
+            .map(|(e, _)| e);
+
+        if let Some(te) = target_entity
+            && let Ok(mut h) = hp_q.get_mut(te)
+        {
+            h.current = h.current.saturating_sub(def.attack_damage);
+        }
+        commands.entity(attacker_entity).remove::<AttackTarget>();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
 
     /// Helper: spawn N empty entities in a fresh World and return their ids.
     /// Lets tests construct distinct Entity values without setting up full ECS state.
@@ -485,5 +533,139 @@ mod tests {
             "no damage in a non-conflict move"
         );
         assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
+    fn resolve_ranged_attacks_archer_hits_target_no_counter() {
+        use shared::components::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_ranged_attacks);
+
+        // Archer registry entry.
+        let archer_id = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_id);
+        registry.definitions.insert(archer_id, archer_def);
+        app.insert_resource(registry);
+
+        let (attacker, target) = {
+            let world = app.world_mut();
+            let p1 = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let p2 = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let attacker = world
+                .spawn((
+                    Unit { type_id: archer_id },
+                    HexPosition::new(0, 0),
+                    Owner(p1),
+                    Health::full(8),
+                    AttackTarget {
+                        pos: HexPosition::new(2, 0),
+                    },
+                ))
+                .id();
+            let target = world
+                .spawn((
+                    Unit { type_id: archer_id },
+                    HexPosition::new(2, 0),
+                    Owner(p2),
+                    Health::full(8),
+                ))
+                .id();
+            (attacker, target)
+        };
+
+        app.update();
+
+        // Target took 3 damage. No counter — attacker still at full HP.
+        let target_hp = app.world().get::<Health>(target).unwrap();
+        assert_eq!(target_hp.current, 5, "target should take attack_damage=3");
+        let attacker_hp = app.world().get::<Health>(attacker).unwrap();
+        assert_eq!(
+            attacker_hp.current, 8,
+            "attacker takes no counter from ranged"
+        );
+        // AttackTarget consumed.
+        assert!(app.world().get::<AttackTarget>(attacker).is_none());
+    }
+
+    #[test]
+    fn resolve_ranged_attacks_no_target_consumes_marker() {
+        use shared::components::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_ranged_attacks);
+
+        let archer_id = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_id);
+        registry.definitions.insert(archer_id, archer_def);
+        app.insert_resource(registry);
+
+        let attacker = {
+            let world = app.world_mut();
+            let p = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            world
+                .spawn((
+                    Unit { type_id: archer_id },
+                    HexPosition::new(0, 0),
+                    Owner(p),
+                    Health::full(8),
+                    AttackTarget {
+                        pos: HexPosition::new(2, 0),
+                    }, // no one there
+                ))
+                .id()
+        };
+
+        app.update();
+
+        assert!(
+            app.world().get::<AttackTarget>(attacker).is_none(),
+            "AttackTarget consumed even when target tile is empty"
+        );
     }
 }
