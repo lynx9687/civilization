@@ -288,6 +288,67 @@ mod tests {
     }
 
     #[test]
+    fn three_way_conflict_each_takes_sum_of_others() {
+        let (_world, entities) = fake_entities(3);
+        let p = Entity::PLACEHOLDER;
+        // All three converge on (1, 0). attack_damage = 4 each.
+        // Each takes 4 + 4 = 8 damage; HPs are 10, 12, 14 → 2, 4, 6 — all alive.
+        let snapshot = vec![
+            UnitSnapshot {
+                entity: entities[0],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: HexPosition::new(0, 0),
+                action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
+            },
+            UnitSnapshot {
+                entity: entities[1],
+                owner: p,
+                hp: 12,
+                max_hp: 12,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: HexPosition::new(1, 0),
+                action: ResolveAction::Stationary,
+            },
+            UnitSnapshot {
+                entity: entities[2],
+                owner: p,
+                hp: 14,
+                max_hp: 14,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: HexPosition::new(2, 0),
+                action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
+            },
+        ];
+
+        let deltas = resolve_movement_pure(snapshot);
+
+        // Each took 8 damage from the other two.
+        assert_eq!(deltas.hp_changes.get(&entities[0]), Some(&-8));
+        assert_eq!(deltas.hp_changes.get(&entities[1]), Some(&-8));
+        assert_eq!(deltas.hp_changes.get(&entities[2]), Some(&-8));
+        // 3 alive → all rollback to start.
+        assert_eq!(
+            deltas.final_positions.get(&entities[0]),
+            Some(&HexPosition::new(0, 0))
+        );
+        assert_eq!(
+            deltas.final_positions.get(&entities[1]),
+            Some(&HexPosition::new(1, 0))
+        );
+        assert_eq!(
+            deltas.final_positions.get(&entities[2]),
+            Some(&HexPosition::new(2, 0))
+        );
+        assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
     fn single_mover_lands_at_destination() {
         let (_world, entities) = fake_entities(1);
         let player = Entity::PLACEHOLDER;
