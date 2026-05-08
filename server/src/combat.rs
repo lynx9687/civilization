@@ -349,6 +349,77 @@ mod tests {
     }
 
     #[test]
+    fn chain_combat_worked_example() {
+        // Setup: A@T1, B@T2, C@T3, all warriors (hp=10, attack_damage=4).
+        // Actions: A moves to T2; C moves to T1; B stationary.
+        // Iter 1: T2 conflict (A, B) → both -4. Survivors rollback. A→T1, B→T2 (no-op).
+        // Iter 2: T1 conflict (A, C) → both -4 (A now at 6, C at 10).
+        //         A→2 HP, C→6 HP. Survivors rollback. A→T1 (no-op), C→T3.
+        // Final: A@T1 (2/10), B@T2 (6/10), C@T3 (6/10).
+        let (_world, entities) = fake_entities(3);
+        let p = Entity::PLACEHOLDER;
+        let t1 = HexPosition::new(0, 0);
+        let t2 = HexPosition::new(1, 0);
+        let t3 = HexPosition::new(2, 0);
+
+        let snapshot = vec![
+            UnitSnapshot {
+                entity: entities[0],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: t1,
+                action: ResolveAction::MoveTo(t2),
+            },
+            UnitSnapshot {
+                entity: entities[1],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: t2,
+                action: ResolveAction::Stationary,
+            },
+            UnitSnapshot {
+                entity: entities[2],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 4,
+                attack_range: 1,
+                start_pos: t3,
+                action: ResolveAction::MoveTo(t1),
+            },
+        ];
+
+        let deltas = resolve_movement_pure(snapshot);
+
+        assert_eq!(deltas.final_positions.get(&entities[0]), Some(&t1));
+        assert_eq!(deltas.final_positions.get(&entities[1]), Some(&t2));
+        assert_eq!(deltas.final_positions.get(&entities[2]), Some(&t3));
+
+        assert_eq!(
+            deltas.hp_changes.get(&entities[0]),
+            Some(&-8),
+            "A took two rounds"
+        );
+        assert_eq!(
+            deltas.hp_changes.get(&entities[1]),
+            Some(&-4),
+            "B took one round"
+        );
+        assert_eq!(
+            deltas.hp_changes.get(&entities[2]),
+            Some(&-4),
+            "C took one round"
+        );
+        assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
     fn single_mover_lands_at_destination() {
         let (_world, entities) = fake_entities(1);
         let player = Entity::PLACEHOLDER;
