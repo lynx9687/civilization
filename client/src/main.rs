@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::{
     RenetChannelsExt, RenetClient, RepliconRenetPlugins,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
+    netcode::{ClientAuthentication, NetcodeClientTransport, NetcodeErrorEvent},
     renet::ConnectionConfig,
 };
 use shared::{events::*, plugin::SharedPlugin};
@@ -55,6 +55,7 @@ fn main() {
         .add_observer(finish_turn_clicked)
         .add_observer(handle_verb_button_click)
         .add_observer(handle_production_button_click)
+        .add_observer(log_netcode_error)
         .add_systems(
             Update,
             (
@@ -104,10 +105,17 @@ fn connect_to_server(
         user_data: None,
     };
     let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;
+    let local_addr = transport.addr()?;
+
+    println!("Client transport ready: renet_client_id={client_id}, local_addr={local_addr}");
 
     commands.insert_resource(client);
     commands.insert_resource(transport);
     Ok(())
+}
+
+fn log_netcode_error(event: On<NetcodeErrorEvent>) {
+    println!("Client netcode error: {}", event.0);
 }
 
 fn on_your_player(

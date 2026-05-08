@@ -11,8 +11,8 @@ use std::{
 use bevy::{app::ScheduleRunnerPlugin, prelude::*, state::app::StatesPlugin};
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet::{
-    RenetChannelsExt, RenetServer, RepliconRenetPlugins,
-    netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
+    RenetChannelsExt, RenetServer, RenetServerEvent, RepliconRenetPlugins,
+    netcode::{NetcodeErrorEvent, NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
 use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
@@ -56,6 +56,8 @@ fn main() {
         .add_observer(handle_finish_turn)
         .add_observer(claim_city_tiles)
         .add_observer(complete_unit_production)
+        .add_observer(log_server_event)
+        .add_observer(log_netcode_error)
         .add_systems(
             Update,
             (
@@ -116,6 +118,21 @@ fn start_server(
 
     println!("Server listening on {}", addr.0);
     Ok(())
+}
+
+fn log_server_event(event: On<RenetServerEvent>) {
+    match **event {
+        bevy_replicon_renet::renet::ServerEvent::ClientConnected { client_id } => {
+            println!("Network client connected: renet_client_id={client_id}");
+        }
+        bevy_replicon_renet::renet::ServerEvent::ClientDisconnected { client_id, reason } => {
+            println!("Network client disconnected: renet_client_id={client_id}, reason={reason}");
+        }
+    }
+}
+
+fn log_netcode_error(event: On<NetcodeErrorEvent>) {
+    println!("Server netcode error: {}", event.0);
 }
 
 fn spawn_grid(mut commands: Commands) {
