@@ -169,7 +169,9 @@ pub enum UnitVerb {
 // universal verbs available to every unit; capability flags add the rest
 pub fn available_verbs(def: &UnitDefinition) -> Vec<UnitVerb> {
     let mut v = vec![UnitVerb::Move, UnitVerb::Fortify, UnitVerb::Skip];
-    if def.attack_damage > 0 {
+    // only ranged units (attack_range > 1) get the Attack verb;
+    // melee classes engage by moving into an enemy hex instead
+    if def.attack_range > 1 {
         v.push(UnitVerb::Attack);
     }
     if !def.build_targets.is_empty() {
@@ -269,20 +271,39 @@ mod tests {
     }
 
     #[test]
-    fn test_available_verbs_for_warrior_class() {
+    fn test_melee_classes_have_no_attack_verb() {
         let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
             .expect("should load");
-        for name in ["warrior", "archer", "cavalry", "knight"] {
+        for name in ["warrior", "cavalry", "knight"] {
             let def = registry
                 .get(&registry.id_of(name).expect(name))
                 .expect(name);
             let verbs = available_verbs(def);
             assert!(verbs.contains(&UnitVerb::Move), "{name} should Move");
-            assert!(verbs.contains(&UnitVerb::Attack), "{name} should Attack");
             assert!(verbs.contains(&UnitVerb::Fortify), "{name} should Fortify");
             assert!(verbs.contains(&UnitVerb::Skip), "{name} should Skip");
+            assert!(
+                !verbs.contains(&UnitVerb::Attack),
+                "{name} (melee, attack_range==1) must NOT have Attack verb"
+            );
             assert!(!verbs.contains(&UnitVerb::Build), "{name} cannot Build");
         }
+    }
+
+    #[test]
+    fn test_archer_has_attack_verb() {
+        let registry = UnitRegistry::load_from_dir(std::path::Path::new("../assets/units"))
+            .expect("should load");
+        let archer = registry.get(&registry.id_of("archer").unwrap()).unwrap();
+        let verbs = available_verbs(archer);
+        assert!(
+            verbs.contains(&UnitVerb::Attack),
+            "archer (attack_range>1) should Attack"
+        );
+        assert!(verbs.contains(&UnitVerb::Move));
+        assert!(verbs.contains(&UnitVerb::Fortify));
+        assert!(verbs.contains(&UnitVerb::Skip));
+        assert!(!verbs.contains(&UnitVerb::Build));
     }
 
     #[test]
@@ -295,7 +316,7 @@ mod tests {
         assert!(verbs.contains(&UnitVerb::Build));
         assert!(verbs.contains(&UnitVerb::Fortify));
         assert!(verbs.contains(&UnitVerb::Skip));
-        // settler has attack_damage = 0 → Attack must be absent
+        // settler has attack_range = 0, so the attack_range > 1 gate is false
         assert!(!verbs.contains(&UnitVerb::Attack));
     }
 
