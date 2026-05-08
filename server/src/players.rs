@@ -75,7 +75,7 @@ pub fn handle_new_clients(
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
-        let starting_units = ["warrior", "settler"];
+        let starting_units = ["warrior", "archer", "settler"];
         for unit_type in starting_units {
             let type_id = registry
                 .id_of(unit_type)
