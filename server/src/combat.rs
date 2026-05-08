@@ -39,19 +39,26 @@ pub struct CombatDeltas {
 
 /// Pure combat resolver. Borrows snapshots so the wrapper can keep the Vec
 /// around for logging without cloning.
+///
+/// The algorithm has three phases per loop iteration:
+/// (1) find a tile with 2+ live units (a conflict),
+/// (2) apply one round of all-vs-all simultaneous damage there,
+/// (3) either settle the tile (≤1 survivor) or rollback survivors to start_pos.
+///
+/// Iteration stops when no conflict remains. Termination is guaranteed by
+/// `start_pos` uniqueness (enforced by handle_unit_action's friendly-stack
+/// checks); the 256-iteration cap is a sanity guard.
 pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
-    let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
-    let mut hps: HashMap<Entity, i32> = HashMap::new();
-    let mut deaths: HashSet<Entity> = HashSet::new();
-
+    // Snapshot-derived indices and initial working state.
     let initial_hps: HashMap<Entity, i32> = units
         .iter()
         .filter(|u| u.hp > 0)
         .map(|u| (u.entity, u.hp))
         .collect();
-
-    // Index snapshot by entity for fast lookup later.
     let by_entity: HashMap<Entity, &UnitSnapshot> = units.iter().map(|u| (u.entity, u)).collect();
+    let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
+    let mut hps: HashMap<Entity, i32> = HashMap::new();
+    let mut deaths: HashSet<Entity> = HashSet::new();
 
     for u in units {
         if u.hp <= 0 {
@@ -65,69 +72,21 @@ pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
         hps.insert(u.entity, u.hp);
     }
 
-    // Iterate: detect conflicts, fight, rollback, repeat until stable.
     let mut iter_count = 0_u32;
     loop {
         iter_count += 1;
         assert!(iter_count < 256, "rollback chain failed to terminate");
 
-        // Find first tile with 2+ live units.
-        let mut by_tile: HashMap<HexPosition, Vec<Entity>> = HashMap::new();
-        for (&e, &p) in &positions {
-            if deaths.contains(&e) {
-                continue;
-            }
-            by_tile.entry(p).or_default().push(e);
-        }
-        let conflict_tile = by_tile
-            .iter()
-            .find(|(_, list)| list.len() >= 2)
-            .map(|(p, _)| *p);
-        let Some(tile) = conflict_tile else {
+        let Some((_tile, combatants)) = find_first_conflict(&positions, &deaths) else {
             break;
         };
-        let combatants: Vec<Entity> = by_tile.get(&tile).cloned().unwrap_or_default();
-
-        // All-vs-all simultaneous damage.
-        // Each combatant takes the sum of every other combatant's attack_damage.
-        let damages_to_take: HashMap<Entity, i32> = combatants
-            .iter()
-            .map(|&e| {
-                let raw: u32 = combatants
-                    .iter()
-                    .filter(|&&v| v != e)
-                    .map(|&v| by_entity[&v].attack_damage)
-                    .sum();
-                (e, raw as i32)
-            })
-            .collect();
-        for (&e, &dmg) in &damages_to_take {
-            *hps.get_mut(&e).unwrap() -= dmg;
-        }
-
-        // Apply this round's deaths.
-        for &e in &combatants {
-            if hps[&e] <= 0 {
-                deaths.insert(e);
-            }
-        }
-
-        let survivors: Vec<Entity> = combatants
-            .iter()
-            .copied()
-            .filter(|e| !deaths.contains(e))
-            .collect();
-
+        let survivors = apply_combat_at_tile(&combatants, &by_entity, &mut hps, &mut deaths);
         if survivors.len() > 1 {
-            // 2+ alive — all rollback to start_pos. Home unit's rollback is a no-op.
-            for s in &survivors {
-                positions.insert(*s, by_entity[s].start_pos);
-            }
+            rollback_to_start(&survivors, &by_entity, &mut positions);
         }
-        // 0 or 1 alive: tile settled. Sole survivor (if any) is already at `tile`.
+        // 0 or 1 alive: tile is already settled; sole survivor (if any) stays at the conflict tile.
     }
 
-    // Build hp_changes (delta) from initial.
     let hp_changes: HashMap<Entity, i32> = hps
         .iter()
         .filter_map(|(e, &h)| {
@@ -141,6 +100,71 @@ pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
         hp_changes,
         final_positions: positions,
         deaths,
+    }
+}
+
+/// Find the first tile that has 2+ live units (excluding already-dead entities).
+/// Returns the tile and its combatants, or None when the world is conflict-free.
+fn find_first_conflict(
+    positions: &HashMap<Entity, HexPosition>,
+    deaths: &HashSet<Entity>,
+) -> Option<(HexPosition, Vec<Entity>)> {
+    let mut by_tile: HashMap<HexPosition, Vec<Entity>> = HashMap::new();
+    for (&e, &p) in positions {
+        if deaths.contains(&e) {
+            continue;
+        }
+        by_tile.entry(p).or_default().push(e);
+    }
+    by_tile.into_iter().find(|(_, list)| list.len() >= 2)
+}
+
+/// One round of all-vs-all simultaneous damage among `combatants` on the same tile.
+/// Each combatant takes the sum of every other combatant's `attack_damage`.
+/// Mutates `hps` (damage applied) and `deaths` (anyone reaching HP ≤ 0 this round).
+/// Returns the survivors of this round.
+fn apply_combat_at_tile(
+    combatants: &[Entity],
+    by_entity: &HashMap<Entity, &UnitSnapshot>,
+    hps: &mut HashMap<Entity, i32>,
+    deaths: &mut HashSet<Entity>,
+) -> Vec<Entity> {
+    // Compute damages first so the exchange is simultaneous (no kill-before-strike).
+    let damages: HashMap<Entity, i32> = combatants
+        .iter()
+        .map(|&e| {
+            let raw: u32 = combatants
+                .iter()
+                .filter(|&&v| v != e)
+                .map(|&v| by_entity[&v].attack_damage)
+                .sum();
+            (e, raw as i32)
+        })
+        .collect();
+    for (&e, &dmg) in &damages {
+        *hps.get_mut(&e).unwrap() -= dmg;
+    }
+    for &e in combatants {
+        if hps[&e] <= 0 {
+            deaths.insert(e);
+        }
+    }
+    combatants
+        .iter()
+        .copied()
+        .filter(|e| !deaths.contains(e))
+        .collect()
+}
+
+/// Send each survivor back to its turn-start position. The home unit's "rollback"
+/// is a no-op since its start_pos equals the conflict tile.
+fn rollback_to_start(
+    survivors: &[Entity],
+    by_entity: &HashMap<Entity, &UnitSnapshot>,
+    positions: &mut HashMap<Entity, HexPosition>,
+) {
+    for s in survivors {
+        positions.insert(*s, by_entity[s].start_pos);
     }
 }
 
