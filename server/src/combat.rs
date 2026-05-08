@@ -1,5 +1,3 @@
-// Types and function are stubs; future tasks will wire them into ECS systems.
-
 use bevy::prelude::*;
 use shared::hex::HexPosition;
 use shared::unit_definition::UnitRegistry;
@@ -8,13 +6,17 @@ use std::collections::{HashMap, HashSet};
 
 /// One row per live unit, gathered by the wrapper system before calling the algorithm.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // used by resolve_movement, which is #[allow(dead_code)] until Task 14
 pub struct UnitSnapshot {
     pub entity: Entity,
+    // owner, max_hp, and attack_range are captured for future algorithm expansions
+    // (e.g. faction-aware combat, morale, extended-range melee) but not yet read.
+    #[allow(dead_code)]
     pub owner: Entity,
     pub hp: i32,
+    #[allow(dead_code)]
     pub max_hp: u32,
     pub attack_damage: u32,
+    #[allow(dead_code)]
     pub attack_range: u32,
     pub start_pos: HexPosition,
     pub action: ResolveAction,
@@ -22,8 +24,7 @@ pub struct UnitSnapshot {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResolveAction {
-    /// No movement this turn. Used in tests; production systems added in a later task.
-    #[allow(dead_code)]
+    /// No movement this turn.
     Stationary,
     /// Move to this destination. Triggers melee combat if an enemy ends up there too.
     MoveTo(HexPosition),
@@ -147,7 +148,6 @@ pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
 /// Submit-time validation already guaranteed an enemy was at the tile at submit;
 /// a missing target here means concentrated-fire killed it earlier in this loop,
 /// or the marker survived a target despawn — either way the attack is wasted.
-#[allow(dead_code)] // wired into main.rs system chain in Task 14
 pub fn resolve_ranged_attacks(
     attackers: Query<(Entity, &Unit, &AttackTarget)>,
     // Health excluded here to avoid conflicting borrows with hp_q below;
@@ -196,7 +196,6 @@ pub fn resolve_ranged_attacks(
 /// and the write queries (for applying deltas) share `Health` and `HexPosition`,
 /// so Bevy requires them to be declared in a `ParamSet` to prove they are
 /// used exclusively, not concurrently.
-#[allow(dead_code)] // wired into main.rs system chain in Task 14
 #[allow(clippy::type_complexity)] // ParamSet with a 6-tuple query; extracting a type alias gains little
 pub fn resolve_movement(
     mut queries: ParamSet<(
@@ -273,7 +272,6 @@ pub fn resolve_movement(
 }
 
 /// Despawn every Unit whose current HP is 0. Replicon replicates the despawn.
-#[allow(dead_code)] // wired into main.rs system chain in Task 14
 pub fn cleanup_dead_units(
     candidates: Query<(Entity, &Health), With<Unit>>,
     mut commands: Commands,

@@ -1,6 +1,6 @@
 mod cities;
 mod cities_systems;
-mod combat; // combat resolution algorithm lives here; ECS wiring is in turn.rs
+mod combat;
 mod players;
 mod turn;
 
@@ -20,6 +20,7 @@ use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 
 use cities::*;
 use cities_systems::*;
+use combat::{cleanup_dead_units, resolve_movement, resolve_ranged_attacks};
 use players::*;
 use turn::*;
 
@@ -64,13 +65,14 @@ fn main() {
                 handle_disconnects,
                 update_turn_phase,
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
-                // resolution window: gated as a group so all resolvers see
+                // Resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
                 (
                     grow_city_population,
                     grant_city_gold,
-                    resolve_moves,
-                    resolve_attacks,
+                    resolve_ranged_attacks,
+                    resolve_movement,
+                    cleanup_dead_units,
                     resolve_fortify,
                     resolve_skip,
                     resolve_builds,

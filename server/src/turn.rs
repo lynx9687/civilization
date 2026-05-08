@@ -192,24 +192,6 @@ pub fn handle_unit_action(
     }
 }
 
-pub fn resolve_moves(
-    mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
-    mut commands: Commands,
-) {
-    for (entity, move_to, mut pos) in &mut units {
-        *pos = move_to.pos;
-        commands.entity(entity).remove::<MoveTo>();
-    }
-}
-
-pub fn resolve_attacks(units: Query<(Entity, &AttackTarget)>, mut commands: Commands) {
-    // stub: combat resolution lands in a separate spec
-    for (entity, target) in &units {
-        println!("(stub) attack from {entity:?} on {:?}", target.pos);
-        commands.entity(entity).remove::<AttackTarget>();
-    }
-}
-
 pub fn resolve_fortify(units: Query<Entity, With<Fortifying>>, mut commands: Commands) {
     // stub: persistent Fortified state added by combat-resolution spec
     for entity in &units {
@@ -418,60 +400,6 @@ mod tests {
         );
 
         let _ = (player_entity,); // suppress unused-variable warning
-    }
-
-    #[test]
-    fn test_resolve_moves_applies_position() {
-        use bevy::prelude::*;
-        use shared::hex::HexPosition;
-        use shared::unit_definition::UnitTypeId;
-        use shared::units::*;
-
-        let mut app = App::new();
-        app.add_systems(Update, resolve_moves);
-        let entity = app
-            .world_mut()
-            .spawn((
-                Unit {
-                    type_id: UnitTypeId(0),
-                },
-                HexPosition::new(0, 0),
-                MoveTo {
-                    pos: HexPosition::new(2, -1),
-                },
-            ))
-            .id();
-        app.update();
-        assert_eq!(
-            *app.world().get::<HexPosition>(entity).unwrap(),
-            HexPosition::new(2, -1)
-        );
-        assert!(app.world().get::<MoveTo>(entity).is_none());
-    }
-
-    #[test]
-    fn test_resolve_attacks_removes_marker() {
-        use bevy::prelude::*;
-        use shared::hex::HexPosition;
-        use shared::unit_definition::UnitTypeId;
-        use shared::units::*;
-
-        let mut app = App::new();
-        app.add_systems(Update, resolve_attacks);
-        let entity = app
-            .world_mut()
-            .spawn((
-                Unit {
-                    type_id: UnitTypeId(0),
-                },
-                HexPosition::new(0, 0),
-                AttackTarget {
-                    pos: HexPosition::new(1, 0),
-                },
-            ))
-            .id();
-        app.update();
-        assert!(app.world().get::<AttackTarget>(entity).is_none());
     }
 
     #[test]
