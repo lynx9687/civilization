@@ -272,6 +272,19 @@ pub fn resolve_movement(
     }
 }
 
+/// Despawn every Unit whose current HP is 0. Replicon replicates the despawn.
+#[allow(dead_code)] // wired into main.rs system chain in Task 14
+pub fn cleanup_dead_units(
+    candidates: Query<(Entity, &Health), With<Unit>>,
+    mut commands: Commands,
+) {
+    for (entity, hp) in &candidates {
+        if hp.current == 0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -924,6 +937,52 @@ mod tests {
         );
         // AttackTarget consumed.
         assert!(app.world().get::<AttackTarget>(attacker).is_none());
+    }
+
+    #[test]
+    fn cleanup_dead_units_despawns_zero_hp() {
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, super::cleanup_dead_units);
+
+        let (alive, dead) = {
+            let world = app.world_mut();
+            let alive = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(0, 0),
+                    Health {
+                        current: 5,
+                        max: 10,
+                    },
+                ))
+                .id();
+            let dead = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(1, 0),
+                    Health {
+                        current: 0,
+                        max: 10,
+                    },
+                ))
+                .id();
+            (alive, dead)
+        };
+
+        app.update();
+
+        assert!(app.world().entities().contains(alive), "alive unit kept");
+        assert!(
+            !app.world().entities().contains(dead),
+            "HP=0 unit despawned"
+        );
     }
 
     #[test]
