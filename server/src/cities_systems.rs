@@ -98,7 +98,13 @@ pub fn handle_city_action(
                 return;
             };
             production.recipe = Some(*recipe);
-            production.accumulated = 0;
+            //restore production if recipe is same as last turn
+            if production.recipe == production.prev_recipe {
+                production.accumulated = production.prev_accumulated;
+            } else {
+                //don't waste production by allowing it to overflow
+                production.accumulated = production.overflown_production;
+            }
         }
         CityAction::ClearProduction => {
             production.recipe = None;
@@ -113,23 +119,26 @@ pub fn advance_city_production(
     mut cities: Query<(Entity, &CityStats, &mut CityProduction), With<City>>,
 ) {
     for (entity, stats, mut production) in &mut cities {
-        let Some(recipe) = production.recipe else {
-            continue;
-        };
-
-        production.accumulated = production
-            .accumulated
-            .saturating_add(stats.production.max(0) as u32);
-        if production.accumulated < recipe.cost {
-            continue;
+        if let Some(recipe) = production.recipe {
+            production.overflown_production = 0;
+            production.accumulated = production
+                .accumulated
+                .saturating_add(stats.production.max(0) as u32);
+            if production.accumulated >= recipe.cost {
+                production.overflown_production = production.accumulated - recipe.cost;
+                production.recipe = None;
+                production.accumulated = 0;
+                commands.trigger(ProductionCompleted {
+                    entity,
+                    output: recipe.output,
+                });
+            }
+        } else {
+            production.accumulated = 0;
+            production.overflown_production = 0;
         }
-
-        production.recipe = None;
-        production.accumulated = 0;
-        commands.trigger(ProductionCompleted {
-            entity,
-            output: recipe.output,
-        });
+        production.prev_recipe = production.recipe;
+        production.prev_accumulated = production.accumulated;
     }
 }
 

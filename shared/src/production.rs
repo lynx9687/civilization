@@ -34,6 +34,9 @@ pub enum ProductionOutput {
 pub struct CityProduction {
     pub recipe: Option<ProductionRecipe>,
     pub accumulated: u32,
+    pub prev_recipe: Option<ProductionRecipe>,
+    pub prev_accumulated: u32,
+    pub overflown_production: u32,
 }
 
 /// Registry of all currently producible recipes.
