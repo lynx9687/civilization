@@ -2,15 +2,18 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use shared::cities::City;
 use shared::events::*;
-use shared::unit_definition::{
-    UnitRegistry, available_verbs, is_within_attack_range, is_within_move_range,
-};
+use shared::unit_definition::{UnitRegistry, is_within_move_range};
+use shared::unit_definition::{available_verbs, is_within_attack_range};
 use shared::units::*;
 use shared::{components::*, hex::HexPosition};
 
 use crate::GRID_RADIUS;
+use crate::cities::spawn_city_at_tile;
 use crate::players::PlayerMap;
+
+const MIN_CITY_CENTER_DISTANCE: i32 = 4;
 
 /// Represents whether player is still making moves or has finished his turn
 #[derive(PartialEq, Eq)]
@@ -172,11 +175,6 @@ pub fn handle_unit_action(
     }
 }
 
-// Each resolver removes its own marker so units start fresh next turn.
-// The turn-resolution gate (all players finished) is applied via run_if
-// at registration time in main.rs — keep these bodies pure so tests can
-// run them in isolation.
-
 pub fn resolve_moves(
     mut units: Query<(Entity, &MoveTo, &mut HexPosition), With<MoveTo>>,
     mut commands: Commands,
@@ -211,11 +209,34 @@ pub fn resolve_skip(units: Query<Entity, With<Skipping>>, mut commands: Commands
     }
 }
 
-pub fn resolve_builds(units: Query<(Entity, &BuildProject)>, mut commands: Commands) {
+pub fn resolve_builds(
+    units: Query<(Entity, &HexPosition, &Owner, &ColorIndex, &BuildProject)>,
+    cities: Query<&HexPosition, With<City>>,
+    mut commands: Commands,
+) {
     // stub: project advancement lands in city/economy spec
-    for (entity, build) in &units {
-        println!("(stub) build {} on {entity:?}", build.name);
-        commands.entity(entity).remove::<BuildProject>();
+    let mut city_centers = cities.iter().copied().collect::<Vec<_>>();
+    for (entity, pos, owner, color, build) in &units {
+        if build.name == "city" {
+            let too_close = city_centers
+                .iter()
+                .any(|city_pos| pos.distance(city_pos) < MIN_CITY_CENTER_DISTANCE);
+            if too_close {
+                println!(
+                    "Rejected city settlement by {entity:?}: city center must be at least {MIN_CITY_CENTER_DISTANCE} tiles from existing cities"
+                );
+                commands.entity(entity).remove::<BuildProject>();
+                continue;
+            }
+
+            println!("Settling city by {entity:?}");
+            spawn_city_at_tile(&mut commands, *pos, owner.0, color.0);
+            city_centers.push(*pos);
+            commands.entity(entity).despawn();
+        } else {
+            println!("(stub) build {} on {entity:?}", build.name);
+            commands.entity(entity).remove::<BuildProject>();
+        }
     }
 }
 
@@ -255,6 +276,7 @@ mod tests {
     use bevy::app::ScheduleRunnerPlugin;
     use bevy::state::app::StatesPlugin;
     use bevy_replicon::prelude::*;
+    use shared::cities::City;
     use shared::components::*;
     use shared::events::*;
     use shared::unit_definition::*;
@@ -314,7 +336,12 @@ mod tests {
             });
 
             // Owning player entity.
-            let player_entity = world.spawn(Player { color_index: 0 }).id();
+            let player_entity = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
 
             // "Client" entity — just a marker entity replicon would have created.
             let client_entity = world.spawn_empty().id();
@@ -477,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_builds_removes_marker() {
+    fn test_resolve_builds_removes_settler() {
         use bevy::prelude::*;
         use shared::hex::HexPosition;
         use shared::unit_definition::UnitTypeId;
@@ -485,6 +512,13 @@ mod tests {
 
         let mut app = App::new();
         app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
         let entity = app
             .world_mut()
             .spawn((
@@ -495,9 +529,182 @@ mod tests {
                 BuildProject {
                     name: "city".into(),
                 },
+                Owner(player),
+                ColorIndex(0),
+            ))
+            .id();
+        app.update();
+        assert!(!app.world().entities().contains(entity));
+    }
+
+    #[test]
+    fn test_resolve_builds_rejects_city_too_close_to_existing_city() {
+        use bevy::prelude::*;
+        use shared::cities::City;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
+        app.world_mut().spawn((City, HexPosition::new(0, 0)));
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(3, 0),
+                BuildProject {
+                    name: "city".into(),
+                },
+                Owner(player),
+                ColorIndex(0),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().entities().contains(entity));
+        assert!(app.world().get::<BuildProject>(entity).is_none());
+        assert_eq!(city_count(&mut app), 1);
+    }
+
+    #[test]
+    fn test_resolve_builds_allows_city_at_minimum_distance() {
+        use bevy::prelude::*;
+        use shared::cities::City;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
+        app.world_mut().spawn((City, HexPosition::new(0, 0)));
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(4, 0),
+                BuildProject {
+                    name: "city".into(),
+                },
+                Owner(player),
+                ColorIndex(0),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(!app.world().entities().contains(entity));
+        assert_eq!(city_count(&mut app), 2);
+    }
+
+    #[test]
+    fn test_resolve_builds_rejects_same_turn_city_too_close_to_new_city() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
+        let first = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                BuildProject {
+                    name: "city".into(),
+                },
+                Owner(player),
+                ColorIndex(0),
+            ))
+            .id();
+        let second = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(3, 0),
+                BuildProject {
+                    name: "city".into(),
+                },
+                Owner(player),
+                ColorIndex(0),
+            ))
+            .id();
+
+        app.update();
+
+        assert!(!app.world().entities().contains(first));
+        assert!(app.world().entities().contains(second));
+        assert!(app.world().get::<BuildProject>(second).is_none());
+        assert_eq!(city_count(&mut app), 1);
+    }
+
+    #[test]
+    fn test_resolve_builds_removes_marker() {
+        use bevy::prelude::*;
+        use shared::hex::HexPosition;
+        use shared::unit_definition::UnitTypeId;
+        use shared::units::*;
+
+        let mut app = App::new();
+        app.add_systems(Update, resolve_builds);
+        let player = app
+            .world_mut()
+            .spawn(Player {
+                color_index: 0,
+                gold: 0,
+            })
+            .id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    type_id: UnitTypeId(0),
+                },
+                HexPosition::new(0, 0),
+                BuildProject {
+                    name: "other".into(),
+                },
+                Owner(player),
+                ColorIndex(0),
             ))
             .id();
         app.update();
         assert!(app.world().get::<BuildProject>(entity).is_none());
+    }
+
+    fn city_count(app: &mut App) -> usize {
+        let mut cities = app.world_mut().query_filtered::<Entity, With<City>>();
+        cities.iter(app.world()).count()
     }
 }

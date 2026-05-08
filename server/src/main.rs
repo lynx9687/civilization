@@ -1,3 +1,5 @@
+mod cities;
+mod cities_systems;
 mod players;
 mod turn;
 
@@ -15,6 +17,8 @@ use bevy_replicon_renet::{
 };
 use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 
+use cities::*;
+use cities_systems::*;
 use players::*;
 use turn::*;
 
@@ -48,21 +52,28 @@ fn main() {
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_unit_action)
+        .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
+        .add_observer(claim_city_tiles)
+        .add_observer(complete_unit_production)
         .add_systems(
             Update,
             (
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
+                recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 // resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
                 (
+                    grow_city_population,
+                    grant_city_gold,
                     resolve_moves,
                     resolve_attacks,
                     resolve_fortify,
                     resolve_skip,
                     resolve_builds,
+                    advance_city_production,
                     advance_turn,
                 )
                     .chain()
@@ -109,7 +120,7 @@ fn start_server(
 
 fn spawn_grid(mut commands: Commands) {
     for pos in generate_grid(GRID_RADIUS) {
-        commands.spawn((Replicated, HexTile, pos));
+        commands.spawn((Replicated, HexTile, pos, DEFAULT_TILE_RESOURCES));
     }
 
     commands.spawn((TurnState {

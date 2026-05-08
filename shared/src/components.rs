@@ -11,6 +11,7 @@ pub struct HexTile;
 #[require(Replicated)]
 pub struct Player {
     pub color_index: u8,
+    pub gold: i32,
 }
 
 /// Replicated turn state — lives on a single entity spawned by the server.

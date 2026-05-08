@@ -1,12 +1,14 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
+use shared::cities::{City, CityOwner, CityStats};
 use shared::components::*;
-use shared::events::{FinishTurn, UnitAction, UnitActionEvent};
+use shared::events::{CityAction, CityActionEvent, FinishTurn, UnitAction, UnitActionEvent};
+use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, RecipeRegistry};
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
 use crate::LocalPlayerColor;
-use crate::input::{LastSubmittedTurn, TargetableVerb, UiState};
+use crate::input::{Controller, LastSubmittedTurn, TargetableVerb, UiState};
 
 pub struct ColorState {
     pub idle: Color,
@@ -47,10 +49,19 @@ pub struct TurnUiText;
 pub struct FinishTurnButton;
 
 #[derive(Component)]
+pub struct CityUiText;
+
+#[derive(Component)]
 pub struct ActionBar;
 
 #[derive(Component)]
 pub struct VerbButton(pub UnitVerb);
+
+#[derive(Component)]
+pub struct ProductionBar;
+
+#[derive(Component)]
+pub struct ProductionButton(pub Option<ProductionRecipeId>);
 
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
@@ -96,6 +107,21 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             TextColor(Color::WHITE),
         ));
 
+    commands.spawn((
+        CityUiText,
+        Text::new("No city selected"),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(48.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+    ));
     // bottom-left action bar; hidden while UiState == Idle
     commands
         .spawn((
@@ -135,6 +161,18 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                     .with_child(Text::new(verb_label(verb)));
             }
         });
+
+    commands.spawn((
+        ProductionBar,
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(58.0),
+            left: Val::Px(10.0),
+            display: Display::None,
+            column_gap: Val::Px(6.0),
+            ..default()
+        },
+    ));
 }
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -246,6 +284,151 @@ pub fn update_turn_ui(
     };
 
     **text = message;
+}
+
+pub fn update_city_ui(
+    controller: Res<Controller>,
+    cities: Query<(&City, &CityOwner, &CityStats, Option<&CityProduction>)>,
+    players: Query<&Player>,
+    units: Res<UnitRegistry>,
+    mut ui_text: Query<&mut Text, With<CityUiText>>,
+) {
+    let Ok(mut text) = ui_text.single_mut() else {
+        return;
+    };
+
+    let Some(city_entity) = controller.selected_city else {
+        **text = "No city selected".to_string();
+        return;
+    };
+
+    let Ok((_city, owner, stats, production)) = cities.get(city_entity) else {
+        **text = "No city selected".to_string();
+        return;
+    };
+
+    let player_gold = players
+        .get(owner.entity)
+        .map_or(-99999, |player| player.gold);
+
+    let production_text = production
+        .and_then(|production| {
+            production.recipe.map(|recipe| {
+                format_recipe_progress(recipe.output, production.accumulated, recipe.cost, &units)
+            })
+        })
+        .unwrap_or_else(|| "None".to_string());
+
+    **text = format!(
+        "City {}\nPopulation: {}\nFood: {} (+{})\nProduction: {}\nProducing: {}\nGold: +{} / owner {}",
+        city_entity,
+        stats.population,
+        stats.food,
+        stats.food_per_turn,
+        stats.production,
+        production_text,
+        stats.gold_per_turn,
+        player_gold
+    );
+}
+
+pub fn populate_production_bar(
+    mut commands: Commands,
+    mut populated: Local<bool>,
+    bars: Query<Entity, With<ProductionBar>>,
+    recipes: Option<Res<RecipeRegistry>>,
+    units: Option<Res<UnitRegistry>>,
+) {
+    if *populated {
+        return;
+    }
+    let Some(recipes) = recipes else {
+        return;
+    };
+    let Some(units) = units else {
+        return;
+    };
+    let Ok(bar) = bars.single() else {
+        return;
+    };
+
+    commands.entity(bar).with_children(|parent| {
+        parent
+            .spawn((
+                ProductionButton(None),
+                Button,
+                production_button_node(),
+                BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
+                BackgroundColor(Color::BLACK),
+            ))
+            .with_child(Text::new("None"));
+
+        let mut recipe_list: Vec<_> = recipes.iter().collect();
+        recipe_list.sort_by_key(|(id, _)| id.0);
+        for (id, recipe) in recipe_list {
+            parent
+                .spawn((
+                    ProductionButton(Some(*id)),
+                    Button,
+                    production_button_node(),
+                    BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
+                    BackgroundColor(Color::BLACK),
+                ))
+                .with_child(Text::new(recipe_button_label(recipe.output, &units)));
+        }
+    });
+
+    *populated = true;
+}
+
+fn production_button_node() -> Node {
+    Node {
+        width: Val::Px(92.0),
+        height: Val::Px(36.0),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        border: UiRect::all(Val::Px(2.0)),
+        ..default()
+    }
+}
+
+fn recipe_button_label(output: ProductionOutput, units: &UnitRegistry) -> String {
+    match output {
+        ProductionOutput::Unit { type_id } => units.name_of(type_id).unwrap_or("Unit").to_string(),
+    }
+}
+
+fn format_recipe_progress(
+    output: ProductionOutput,
+    accumulated: u32,
+    cost: u32,
+    units: &UnitRegistry,
+) -> String {
+    format!(
+        "{} {}/{}",
+        recipe_button_label(output, units),
+        accumulated,
+        cost
+    )
+}
+
+pub fn update_production_bar(
+    controller: Res<Controller>,
+    cities: Query<&CityOwner, With<City>>,
+    mut bars: Query<&mut Node, With<ProductionBar>>,
+) {
+    if !controller.is_changed() {
+        return;
+    }
+
+    let show = controller
+        .selected_city
+        .and_then(|city| cities.get(city).ok())
+        .is_some_and(|owner| Some(owner.entity) == controller.player_entity);
+
+    for mut node in &mut bars {
+        node.display = if show { Display::Flex } else { Display::None };
+    }
 }
 
 // reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
@@ -399,4 +582,35 @@ pub fn handle_verb_button_click(
             *ui_state = UiState::Idle;
         }
     }
+}
+
+pub fn handle_production_button_click(
+    click: On<Pointer<Click>>,
+    mut commands: Commands,
+    buttons: Query<&ProductionButton>,
+    controller: Res<Controller>,
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+) {
+    let Ok(button) = buttons.get(click.entity) else {
+        return;
+    };
+    let Some(city) = controller.selected_city else {
+        return;
+    };
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Accepting {
+        return;
+    }
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
+
+    let action = match button.0 {
+        Some(recipe_id) => CityAction::SetProduction { recipe_id },
+        None => CityAction::ClearProduction,
+    };
+    commands.client_trigger(CityActionEvent { city, action });
 }
