@@ -211,6 +211,49 @@ mod tests {
     }
 
     #[test]
+    fn two_way_conflict_one_survivor_takes_tile() {
+        let (_world, entities) = fake_entities(2);
+        let p = Entity::PLACEHOLDER;
+        // A is much stronger and B is on its last legs.
+        // A: 10/10 HP, 8 atk. B: 4/4 HP, 2 atk.
+        // After exchange: A takes 2 → 8 HP (alive). B takes 8 → 0 HP (dead).
+        let snapshot = vec![
+            UnitSnapshot {
+                entity: entities[0],
+                owner: p,
+                hp: 10,
+                max_hp: 10,
+                attack_damage: 8,
+                attack_range: 1,
+                start_pos: HexPosition::new(0, 0),
+                action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
+            },
+            UnitSnapshot {
+                entity: entities[1],
+                owner: p,
+                hp: 4,
+                max_hp: 4,
+                attack_damage: 2,
+                attack_range: 1,
+                start_pos: HexPosition::new(1, 0),
+                action: ResolveAction::Stationary,
+            },
+        ];
+
+        let deltas = resolve_movement_pure(snapshot);
+
+        assert!(deltas.deaths.contains(&entities[1]), "B should be dead");
+        assert!(!deltas.deaths.contains(&entities[0]), "A should be alive");
+        // A (sole survivor) takes the tile.
+        assert_eq!(
+            deltas.final_positions.get(&entities[0]),
+            Some(&HexPosition::new(1, 0))
+        );
+        assert_eq!(deltas.hp_changes.get(&entities[0]), Some(&-2));
+        assert_eq!(deltas.hp_changes.get(&entities[1]), Some(&-8));
+    }
+
+    #[test]
     fn single_mover_lands_at_destination() {
         let (_world, entities) = fake_entities(1);
         let player = Entity::PLACEHOLDER;
