@@ -1,5 +1,6 @@
 mod cities;
 mod cities_systems;
+mod combat; // combat resolution algorithm lives here; ECS wiring is in turn.rs
 mod players;
 mod turn;
 
