@@ -3,12 +3,12 @@
 use bevy::prelude::*;
 use shared::hex::HexPosition;
 use shared::unit_definition::UnitRegistry;
-use shared::units::{AttackTarget, Health, Unit};
+use shared::units::{AttackTarget, Health, MoveTo, Owner, Unit};
 use std::collections::{HashMap, HashSet};
 
 /// One row per live unit, gathered by the wrapper system before calling the algorithm.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
+#[allow(dead_code)] // used by resolve_movement, which is #[allow(dead_code)] until Task 14
 pub struct UnitSnapshot {
     pub entity: Entity,
     pub owner: Entity,
@@ -26,12 +26,10 @@ pub enum ResolveAction {
     #[allow(dead_code)]
     Stationary,
     /// Move to this destination. Triggers melee combat if an enemy ends up there too.
-    #[allow(dead_code)]
     MoveTo(HexPosition),
 }
 
 #[derive(Default, Debug)]
-#[allow(dead_code)]
 pub struct CombatDeltas {
     pub hp_changes: HashMap<Entity, i32>,
     pub final_positions: HashMap<Entity, HexPosition>,
@@ -39,7 +37,6 @@ pub struct CombatDeltas {
 }
 
 /// Pure combat resolver. Expanded task by task.
-#[allow(dead_code)]
 pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
     let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
     let mut hps: HashMap<Entity, i32> = HashMap::new();
@@ -189,6 +186,89 @@ pub fn resolve_ranged_attacks(
             h.current = h.current.saturating_sub(def.attack_damage);
         }
         commands.entity(attacker_entity).remove::<AttackTarget>();
+    }
+}
+
+/// ECS wrapper around `resolve_movement_pure`. Snapshots live units,
+/// runs the algorithm, applies HP / position deltas, and consumes MoveTo markers.
+///
+/// Uses a `ParamSet` to avoid B0001: the read query (for snapshot building)
+/// and the write queries (for applying deltas) share `Health` and `HexPosition`,
+/// so Bevy requires them to be declared in a `ParamSet` to prove they are
+/// used exclusively, not concurrently.
+#[allow(dead_code)] // wired into main.rs system chain in Task 14
+#[allow(clippy::type_complexity)] // ParamSet with a 6-tuple query; extracting a type alias gains little
+pub fn resolve_movement(
+    mut queries: ParamSet<(
+        // p0: read-only snapshot query
+        Query<(
+            Entity,
+            &Owner,
+            &HexPosition,
+            &Health,
+            &Unit,
+            Option<&MoveTo>,
+        )>,
+        // p1: mutable HP write-back
+        Query<&mut Health>,
+        // p2: mutable position write-back
+        Query<&mut HexPosition>,
+    )>,
+    registry: Res<UnitRegistry>,
+    mut commands: Commands,
+) {
+    // 1. Build snapshot and record which entities had MoveTo — immutable pass only.
+    let mut had_move_to: Vec<Entity> = Vec::new();
+    let snapshot: Vec<UnitSnapshot> = queries
+        .p0()
+        .iter()
+        .filter(|(_, _, _, h, _, _)| h.current > 0)
+        .filter_map(|(e, owner, pos, h, unit, move_to)| {
+            let def = registry.get(&unit.type_id)?;
+            let action = match move_to {
+                Some(m) => {
+                    had_move_to.push(e);
+                    ResolveAction::MoveTo(m.pos)
+                }
+                None => ResolveAction::Stationary,
+            };
+            Some(UnitSnapshot {
+                entity: e,
+                owner: owner.0,
+                hp: h.current as i32,
+                max_hp: h.max,
+                attack_damage: def.attack_damage,
+                attack_range: def.attack_range,
+                start_pos: *pos,
+                action,
+            })
+        })
+        .collect();
+
+    // 2. Run pure algorithm.
+    let deltas = resolve_movement_pure(snapshot);
+
+    // 3. Apply HP changes via p1.
+    for (e, delta) in &deltas.hp_changes {
+        if let Ok(mut h) = queries.p1().get_mut(*e) {
+            let new_hp = (h.current as i32 + delta).max(0);
+            h.current = new_hp as u32;
+        }
+    }
+
+    // 4. Apply final positions to non-dead units via p2.
+    for (e, pos) in &deltas.final_positions {
+        if deltas.deaths.contains(e) {
+            continue;
+        }
+        if let Ok(mut p) = queries.p2().get_mut(*e) {
+            *p = *pos;
+        }
+    }
+
+    // 5. Consume MoveTo markers from every unit that had one.
+    for e in had_move_to {
+        commands.entity(e).remove::<MoveTo>();
     }
 }
 
@@ -533,6 +613,239 @@ mod tests {
             "no damage in a non-conflict move"
         );
         assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
+    fn resolve_movement_simple_move_to_empty_tile() {
+        use shared::components::*;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        let unit = {
+            let world = app.world_mut();
+            let p = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            world
+                .spawn((
+                    Unit {
+                        type_id: warrior_id,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(p),
+                    Health::full(10),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id()
+        };
+
+        app.update();
+
+        let pos = app.world().get::<HexPosition>(unit).unwrap();
+        assert_eq!(*pos, HexPosition::new(1, 0));
+        assert!(app.world().get::<MoveTo>(unit).is_none(), "MoveTo consumed");
+        let hp = app.world().get::<Health>(unit).unwrap();
+        assert_eq!(hp.current, 10, "no combat → no damage");
+    }
+
+    #[test]
+    fn resolve_movement_two_way_stalemate_rolls_back() {
+        use shared::components::*;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        let (a, b) = {
+            let world = app.world_mut();
+            let p1 = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let p2 = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let a = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_id,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(p1),
+                    Health::full(10),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+            let b = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_id,
+                    },
+                    HexPosition::new(1, 0),
+                    Owner(p2),
+                    Health::full(10),
+                ))
+                .id();
+            (a, b)
+        };
+
+        app.update();
+
+        // A rolled back to start.
+        assert_eq!(
+            *app.world().get::<HexPosition>(a).unwrap(),
+            HexPosition::new(0, 0)
+        );
+        // B stayed.
+        assert_eq!(
+            *app.world().get::<HexPosition>(b).unwrap(),
+            HexPosition::new(1, 0)
+        );
+        // Both took 4 damage.
+        assert_eq!(app.world().get::<Health>(a).unwrap().current, 6);
+        assert_eq!(app.world().get::<Health>(b).unwrap().current, 6);
+        // MoveTo on A consumed.
+        assert!(app.world().get::<MoveTo>(a).is_none());
+    }
+
+    #[test]
+    fn resolve_movement_move_into_enemy_kill_takes_tile() {
+        use shared::components::*;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        // Two unit types: a strong attacker (10 atk) and a weak defender (2 atk, 1 HP).
+        let strong = UnitTypeId(0);
+        let weak = UnitTypeId(1);
+        let strong_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 10,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let weak_def = UnitDefinition {
+            hp: 1,
+            move_budget: 1,
+            attack_range: 1,
+            attack_damage: 2,
+            gold_upkeep: 0,
+            production_cost: 5,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("strong".into(), strong);
+        registry.name_to_id.insert("weak".into(), weak);
+        registry.definitions.insert(strong, strong_def);
+        registry.definitions.insert(weak, weak_def);
+        app.insert_resource(registry);
+
+        let (attacker, victim) = {
+            let world = app.world_mut();
+            let p1 = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let p2 = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let attacker = world
+                .spawn((
+                    Unit { type_id: strong },
+                    HexPosition::new(0, 0),
+                    Owner(p1),
+                    Health::full(10),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+            let victim = world
+                .spawn((
+                    Unit { type_id: weak },
+                    HexPosition::new(1, 0),
+                    Owner(p2),
+                    Health::full(1),
+                ))
+                .id();
+            (attacker, victim)
+        };
+
+        app.update();
+
+        // Attacker survived and took the tile.
+        assert_eq!(
+            *app.world().get::<HexPosition>(attacker).unwrap(),
+            HexPosition::new(1, 0)
+        );
+        // Victim is dead (HP 0 — despawn happens in cleanup_dead_units, not here).
+        let v_hp = app.world().get::<Health>(victim).unwrap().current;
+        assert_eq!(v_hp, 0, "victim HP should be 0");
+        // Attacker took 2 damage.
+        assert_eq!(app.world().get::<Health>(attacker).unwrap().current, 8);
     }
 
     #[test]
