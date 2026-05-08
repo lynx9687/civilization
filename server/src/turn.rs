@@ -87,7 +87,7 @@ pub fn handle_unit_action(
     player_map: Res<PlayerMap>,
     units: Query<(&HexPosition, &Owner, &Unit)>,
     enemy_units: Query<(&HexPosition, &Owner), With<Unit>>,
-    queued_moves: Query<(&MoveTo, &Owner), With<Unit>>, // for same-turn collision detection
+    queued_moves: Query<(Entity, &MoveTo, &Owner), With<Unit>>, // for same-turn collision detection
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
 ) {
@@ -147,9 +147,11 @@ pub fn handle_unit_action(
                 return;
             }
             // Reject if another friendly already queued a Move to the same tile this turn.
+            // Skip the issuing unit's own marker — re-submitting the same target on the
+            // same unit must succeed (it's a no-op replace handled by queue_marker).
             if queued_moves
                 .iter()
-                .any(|(mv, o)| mv.pos == *target && o.0 == *player_entity)
+                .any(|(e, mv, o)| e != entity && mv.pos == *target && o.0 == *player_entity)
             {
                 println!("Rejected move: tile already targeted by another friendly");
                 return;
@@ -651,6 +653,209 @@ mod tests {
     fn city_count(app: &mut App) -> usize {
         let mut cities = app.world_mut().query_filtered::<Entity, With<City>>();
         cities.iter(app.world()).count()
+    }
+
+    /// Regression test: a unit's own queued MoveTo must not prevent it from resubmitting.
+    ///
+    /// Scenario:
+    /// 1. Mover queues Move to (-1, 0) — accepted (no conflict).
+    /// 2. Mover resubmits Move to (-1, 0). Without the fix, queued_moves sees the unit's
+    ///    own marker and rejects it; queue_marker is never called so MoveTo is cleared by
+    ///    something else, or the second assert catches the wrong target if we also test a
+    ///    target change.
+    ///
+    /// We test the observable effect of the bug by having a neighbor already queued at
+    /// (1, 0) and then:
+    ///   a) Verify the neighbor's marker correctly blocks a DIFFERENT unit from targeting (1, 0).
+    ///   b) Give mover a MoveTo { (-1, 0) } (via accepted first submission to a free tile),
+    ///      then have the mover resubmit to that same tile. The bug causes rejection because
+    ///      queued_moves sees the mover's own marker. We detect this by also testing that the
+    ///      mover can change to a different free tile after the rejected re-submission — but
+    ///      more directly: if the second submission succeeds, queue_marker runs and replaces
+    ///      the marker; if it fails, the marker stays. We verify via a target change: first
+    ///      get MoveTo(-1,0) accepted, then resubmit to (-1,0) — buggy code rejects it but
+    ///      the marker persists from the first submission, making the test misleading.
+    ///
+    /// Better approach: first accept Move to free tile A, giving mover MoveTo{A}. Then submit
+    /// Move to free tile B (different from A and no neighbor conflict). With the bug, the
+    /// queued_moves query sees mover's own MoveTo{A} but its pos != B, so the check doesn't
+    /// fire — wait, the check is `mv.pos == *target`, so A != B means no conflict is
+    /// reported even with the bug. The bug only fires when re-submitting to the SAME tile.
+    ///
+    /// Clearest observable form: mover has MoveTo{A} (from accepted first move). Player
+    /// resubmits Move to A. Bug: queued_moves sees mover's own MoveTo{A}, pos matches,
+    /// rejects. queue_marker is NOT called. BUT the old MoveTo{A} is still present (not
+    /// cleared because queue_marker never ran). The test using expect().pos == A would pass
+    /// even with the bug. So we need a way to know the observer RAN queue_marker.
+    ///
+    /// Solution: after the re-submission, also submit a Move to a DIFFERENT tile B (free).
+    /// With the bug, the first re-submission (to A) is rejected. queue_marker was not run,
+    /// so the old MoveTo{A} persists into the second submission attempt (to B). The second
+    /// submission (to B) has no queue conflict (B is free), so it succeeds — MoveTo becomes
+    /// {B}. This happens regardless of the bug. No observable difference.
+    ///
+    /// SIMPLEST CLEAR TEST: Don't pre-queue. Submit Move to A (free). Accepted: MoveTo{A}.
+    /// Submit Move to A again. Bug: sees own MoveTo{A}, rejects. The second queue_marker
+    /// is not called. But `queue_marker` first removes MoveTo then inserts the new one.
+    /// If the re-submission were ACCEPTED, queue_marker would run: remove MoveTo then
+    /// insert MoveTo{A} again. Net result: MoveTo{A} present. If REJECTED, queue_marker
+    /// doesn't run: MoveTo{A} still present from before. Either way MoveTo{A} is present.
+    ///
+    /// To detect the bug we need to observe that queue_marker DID run. Since queue_marker
+    /// also removes ALL other markers (AttackTarget, Fortifying etc.), we can insert one
+    /// of those before the re-submission and check it's gone (meaning queue_marker ran).
+    #[test]
+    fn test_handle_unit_action_allows_same_unit_to_change_move_target() {
+        use crate::players::PlayerMap;
+        use bevy::app::ScheduleRunnerPlugin;
+        use bevy::state::app::StatesPlugin;
+        use bevy_replicon::prelude::*;
+        use shared::components::*;
+        use shared::events::*;
+        use shared::unit_definition::*;
+        use shared::units::*;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, _player, mover, neighbor) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let mover = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            // Neighbor already has MoveTo(1,0) queued — mover must not target (1,0).
+            let neighbor = world
+                .spawn((
+                    Unit {
+                        type_id: UnitTypeId(0),
+                    },
+                    HexPosition::new(2, 0),
+                    Owner(player),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+            (client, player, mover, neighbor)
+        };
+
+        // Part A: confirm the friendly-stacking rule still fires for a DIFFERENT unit.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit: mover,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(mover).is_none(),
+            "Move to a tile already queued by a friendly should be rejected"
+        );
+
+        // Part B: mover gets Move to (-1, 0) accepted (free tile, no conflict).
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit: mover,
+                action: UnitAction::Move {
+                    target: HexPosition::new(-1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(mover).is_some(),
+            "Move to free tile should be accepted"
+        );
+
+        // Manually add a Fortifying marker so we can detect whether queue_marker ran.
+        // queue_marker always removes Fortifying before inserting the new marker, so if
+        // the re-submission is accepted, Fortifying will be gone. If the bug causes
+        // rejection, queue_marker never runs and Fortifying persists.
+        app.world_mut().entity_mut(mover).insert(Fortifying);
+        app.world_mut().flush();
+
+        // Part C: mover resubmits Move to (-1, 0) — same target as the queued marker.
+        // Bug: queued_moves sees the unit's own MoveTo{(-1,0)}, pos matches, rejects it.
+        // Fix: the check skips the issuing entity, so this is accepted and queue_marker runs.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit: mover,
+                action: UnitAction::Move {
+                    target: HexPosition::new(-1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+
+        // If the re-submission was accepted, queue_marker ran and removed Fortifying.
+        assert!(
+            app.world().get::<Fortifying>(mover).is_none(),
+            "re-submitting Move to same target on same unit must be accepted — \
+             queue_marker should have run and removed the Fortifying marker; \
+             if Fortifying persists, the unit's own queued MoveTo is blocking itself"
+        );
+        // And the MoveTo should still be present pointing to the same target.
+        let mt = app
+            .world()
+            .get::<MoveTo>(mover)
+            .expect("MoveTo must still be present after re-submission");
+        assert_eq!(mt.pos, HexPosition::new(-1, 0));
+
+        let _ = neighbor;
     }
 
     #[test]
