@@ -37,8 +37,9 @@ pub struct CombatDeltas {
     pub deaths: HashSet<Entity>,
 }
 
-/// Pure combat resolver. Expanded task by task.
-pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
+/// Pure combat resolver. Borrows snapshots so the wrapper can keep the Vec
+/// around for logging without cloning.
+pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
     let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
     let mut hps: HashMap<Entity, i32> = HashMap::new();
     let mut deaths: HashSet<Entity> = HashSet::new();
@@ -52,7 +53,7 @@ pub fn resolve_movement_pure(units: Vec<UnitSnapshot>) -> CombatDeltas {
     // Index snapshot by entity for fast lookup later.
     let by_entity: HashMap<Entity, &UnitSnapshot> = units.iter().map(|u| (u.entity, u)).collect();
 
-    for u in &units {
+    for u in units {
         if u.hp <= 0 {
             continue;
         }
@@ -226,23 +227,15 @@ pub fn resolve_movement(
     registry: Res<UnitRegistry>,
     mut commands: Commands,
 ) {
-    // 1. Build snapshot and record which entities had MoveTo — immutable pass only.
-    let mut had_move_to: Vec<Entity> = Vec::new();
-    let mut start_positions: HashMap<Entity, HexPosition> = HashMap::new();
-    let mut intent: HashMap<Entity, HexPosition> = HashMap::new();
+    // 1. Build snapshot — immutable pass.
     let snapshot: Vec<UnitSnapshot> = queries
         .p0()
         .iter()
         .filter(|(_, _, _, h, _, _)| h.current > 0)
         .filter_map(|(e, owner, pos, h, unit, move_to)| {
             let def = registry.get(&unit.type_id)?;
-            start_positions.insert(e, *pos);
             let action = match move_to {
-                Some(m) => {
-                    had_move_to.push(e);
-                    intent.insert(e, m.pos);
-                    ResolveAction::MoveTo(m.pos)
-                }
+                Some(m) => ResolveAction::MoveTo(m.pos),
                 None => ResolveAction::Stationary,
             };
             Some(UnitSnapshot {
@@ -258,8 +251,12 @@ pub fn resolve_movement(
         })
         .collect();
 
+    // Index for log-time lookup of a unit's pre-resolution state.
+    let snap_by_entity: HashMap<Entity, &UnitSnapshot> =
+        snapshot.iter().map(|s| (s.entity, s)).collect();
+
     // 2. Run pure algorithm.
-    let deltas = resolve_movement_pure(snapshot);
+    let deltas = resolve_movement_pure(&snapshot);
 
     // 3. Apply HP changes via p1.
     for (e, delta) in &deltas.hp_changes {
@@ -278,27 +275,27 @@ pub fn resolve_movement(
         if deltas.deaths.contains(e) {
             continue;
         }
-        let start = start_positions.get(e).copied().unwrap_or(*pos);
-        if *pos != start {
-            println!("Moved: {e} {start:?} -> {pos:?}");
-        } else if let Some(want) = intent.get(e).copied()
-            && want != start
-        {
-            println!("Rolled back: {e} stayed at {start:?} (intended {want:?})");
+        if let Some(snap) = snap_by_entity.get(e) {
+            let start = snap.start_pos;
+            if *pos != start {
+                println!("Moved: {e} {start:?} -> {pos:?}");
+            } else if let ResolveAction::MoveTo(want) = snap.action
+                && want != start
+            {
+                println!("Rolled back: {e} stayed at {start:?} (intended {want:?})");
+            }
         }
         if let Ok(mut p) = queries.p2().get_mut(*e) {
             *p = *pos;
         }
     }
 
-    // Log deaths separately so they're easy to spot in the noise.
-    for e in &deltas.deaths {
-        println!("Died: {e}");
-    }
-
     // 5. Consume MoveTo markers from every unit that had one.
-    for e in had_move_to {
-        commands.entity(e).remove::<MoveTo>();
+    // Death is logged once, by cleanup_dead_units in the next system.
+    for snap in &snapshot {
+        if matches!(snap.action, ResolveAction::MoveTo(_)) {
+            commands.entity(snap.entity).remove::<MoveTo>();
+        }
     }
 }
 
@@ -309,7 +306,7 @@ pub fn cleanup_dead_units(
 ) {
     for (entity, hp) in &candidates {
         if hp.current == 0 {
-            println!("Despawning dead unit {entity}");
+            println!("Despawn: {entity}");
             commands.entity(entity).despawn();
         }
     }
@@ -329,7 +326,7 @@ mod tests {
 
     #[test]
     fn empty_input_returns_empty_deltas() {
-        let deltas = resolve_movement_pure(vec![]);
+        let deltas = resolve_movement_pure(&[]);
         assert!(deltas.hp_changes.is_empty());
         assert!(deltas.final_positions.is_empty());
         assert!(deltas.deaths.is_empty());
@@ -364,7 +361,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         // Both alive → both rolled back to start. A back to (0,0), B stays at (1,0).
         assert_eq!(
@@ -411,7 +408,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         assert!(deltas.deaths.contains(&entities[1]), "B should be dead");
         assert!(!deltas.deaths.contains(&entities[0]), "A should be alive");
@@ -452,7 +449,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         assert!(deltas.deaths.contains(&entities[0]));
         assert!(deltas.deaths.contains(&entities[1]));
@@ -497,7 +494,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         // Each took 8 damage from the other two.
         assert_eq!(deltas.hp_changes.get(&entities[0]), Some(&-8));
@@ -566,7 +563,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         assert_eq!(deltas.final_positions.get(&entities[0]), Some(&t1));
         assert_eq!(deltas.final_positions.get(&entities[1]), Some(&t2));
@@ -621,7 +618,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         // No conflict ever forms; both units end up at their destinations.
         assert_eq!(deltas.final_positions.get(&entities[0]), Some(&t2));
@@ -645,7 +642,7 @@ mod tests {
             action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
         }];
 
-        let deltas = resolve_movement_pure(snapshot);
+        let deltas = resolve_movement_pure(&snapshot);
 
         assert_eq!(
             deltas.final_positions.get(&entities[0]),
