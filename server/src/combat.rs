@@ -183,7 +183,17 @@ pub fn resolve_ranged_attacks(
         if let Some(te) = target_entity
             && let Ok(mut h) = hp_q.get_mut(te)
         {
+            let before = h.current;
             h.current = h.current.saturating_sub(def.attack_damage);
+            println!(
+                "Ranged: {attacker_entity} hit {te} at {:?} for {} dmg (hp {} -> {})",
+                attack_target.pos, def.attack_damage, before, h.current
+            );
+        } else {
+            println!(
+                "Ranged: {attacker_entity} attack at {:?} wasted (no live target)",
+                attack_target.pos
+            );
         }
         commands.entity(attacker_entity).remove::<AttackTarget>();
     }
@@ -218,15 +228,19 @@ pub fn resolve_movement(
 ) {
     // 1. Build snapshot and record which entities had MoveTo — immutable pass only.
     let mut had_move_to: Vec<Entity> = Vec::new();
+    let mut start_positions: HashMap<Entity, HexPosition> = HashMap::new();
+    let mut intent: HashMap<Entity, HexPosition> = HashMap::new();
     let snapshot: Vec<UnitSnapshot> = queries
         .p0()
         .iter()
         .filter(|(_, _, _, h, _, _)| h.current > 0)
         .filter_map(|(e, owner, pos, h, unit, move_to)| {
             let def = registry.get(&unit.type_id)?;
+            start_positions.insert(e, *pos);
             let action = match move_to {
                 Some(m) => {
                     had_move_to.push(e);
+                    intent.insert(e, m.pos);
                     ResolveAction::MoveTo(m.pos)
                 }
                 None => ResolveAction::Stationary,
@@ -251,6 +265,10 @@ pub fn resolve_movement(
     for (e, delta) in &deltas.hp_changes {
         if let Ok(mut h) = queries.p1().get_mut(*e) {
             let new_hp = (h.current as i32 + delta).max(0);
+            println!(
+                "Combat: {e} took {} dmg (hp {} -> {})",
+                -delta, h.current, new_hp
+            );
             h.current = new_hp as u32;
         }
     }
@@ -260,9 +278,22 @@ pub fn resolve_movement(
         if deltas.deaths.contains(e) {
             continue;
         }
+        let start = start_positions.get(e).copied().unwrap_or(*pos);
+        if *pos != start {
+            println!("Moved: {e} {start:?} -> {pos:?}");
+        } else if let Some(want) = intent.get(e).copied()
+            && want != start
+        {
+            println!("Rolled back: {e} stayed at {start:?} (intended {want:?})");
+        }
         if let Ok(mut p) = queries.p2().get_mut(*e) {
             *p = *pos;
         }
+    }
+
+    // Log deaths separately so they're easy to spot in the noise.
+    for e in &deltas.deaths {
+        println!("Died: {e}");
     }
 
     // 5. Consume MoveTo markers from every unit that had one.
@@ -278,6 +309,7 @@ pub fn cleanup_dead_units(
 ) {
     for (entity, hp) in &candidates {
         if hp.current == 0 {
+            println!("Despawning dead unit {entity}");
             commands.entity(entity).despawn();
         }
     }

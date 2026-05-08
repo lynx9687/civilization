@@ -156,6 +156,7 @@ pub fn handle_unit_action(
                 println!("Rejected move: tile already targeted by another friendly");
                 return;
             }
+            println!("Queued Move: unit {entity} (player {player_entity}) {pos:?} -> {target:?}");
             queue_marker(&mut commands, entity, MoveTo { pos: *target });
         }
         UnitAction::Attack { target } => {
@@ -170,12 +171,17 @@ pub fn handle_unit_action(
                 println!("Rejected attack: no enemy at target");
                 return;
             }
+            println!(
+                "Queued Attack: unit {entity} (player {player_entity}) at {pos:?} -> {target:?}"
+            );
             queue_marker(&mut commands, entity, AttackTarget { pos: *target });
         }
         UnitAction::Fortify => {
+            println!("Queued Fortify: unit {entity} (player {player_entity})");
             queue_marker(&mut commands, entity, Fortifying);
         }
         UnitAction::Skip => {
+            println!("Queued Skip: unit {entity} (player {player_entity})");
             queue_marker(&mut commands, entity, Skipping);
         }
         UnitAction::Build { project } => {
@@ -183,6 +189,7 @@ pub fn handle_unit_action(
                 println!("Rejected build: project {project:?} not buildable");
                 return;
             }
+            println!("Queued Build: unit {entity} (player {player_entity}) project {project:?}");
             queue_marker(
                 &mut commands,
                 entity,
