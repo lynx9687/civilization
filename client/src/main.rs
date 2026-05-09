@@ -1,3 +1,4 @@
+mod camera;
 mod input;
 mod ui;
 mod visuals;
@@ -16,6 +17,7 @@ use bevy_replicon_renet::{
 };
 use shared::{events::*, plugin::SharedPlugin};
 
+use camera::*;
 use input::*;
 use ui::*;
 use visuals::*;
@@ -50,7 +52,16 @@ fn main() {
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
         .init_resource::<UiState>()
-        .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
+        .init_resource::<CameraZoom>()
+        .add_systems(
+            Startup,
+            (
+                setup_camera,
+                setup_hex_materials,
+                connect_to_server,
+                spawn_turn_ui,
+            ),
+        )
         .add_observer(on_your_player)
         .add_observer(finish_turn_clicked)
         .add_observer(handle_verb_button_click)
@@ -62,6 +73,8 @@ fn main() {
                 spawn_unit_visuals,
                 spawn_city_visuals,
                 update_unit_positions,
+                move_camera_with_keyboard,
+                zoom_camera_with_scroll,
                 update_hex_highlights,
                 handle_left_click,
                 handle_right_click,

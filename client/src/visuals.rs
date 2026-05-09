@@ -23,9 +23,7 @@ pub struct HexMaterials {
     pub valid_attack: Handle<ColorMaterial>,
 }
 
-pub fn setup_camera(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
-    commands.spawn(Camera2d);
-
+pub fn setup_hex_materials(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
     let hex_materials = HexMaterials {
         default: materials.add(Color::srgb(0.15, 0.15, 0.2)),
         hovered: materials.add(Color::srgb(0.3, 0.3, 0.4)),
