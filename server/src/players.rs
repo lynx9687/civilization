@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use rand::Rng;
 use rand::seq::SliceRandom;
 use shared::events::*;
 use shared::unit_definition::UnitRegistry;
@@ -15,11 +14,8 @@ use crate::turn::{PlayerState, PlayerTurnState};
 /// Region is the axial parallelogram q,r ∈ [-N, N] — a (2N+1)² parallelogram, NOT a hex disc.
 /// At N=2 the region has 25 tiles. With max_clients=8 and up to 3 starting units per player
 /// (24 total), this is tight but fits — bump if either rises.
-// `allow(dead_code)`: wired into `handle_new_clients` in the follow-up commit (Task 2 of issue #6).
-#[allow(dead_code)]
 const STARTING_AREA_HALF_EXTENT: i32 = 2;
 
-#[allow(dead_code)]
 fn pick_starting_positions(
     occupied: &HashSet<HexPosition>,
     count: usize,
@@ -71,11 +67,18 @@ pub struct NewPlayerSetup<'w> {
 #[allow(clippy::too_many_arguments)]
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
+    existing_units: Query<&HexPosition, With<Unit>>,
     mut commands: Commands,
     mut color_counter: ResMut<ColorCounter>,
     registry: Res<UnitRegistry>,
     mut setup: NewPlayerSetup,
 ) {
+    // Seed the occupied set from existing units; updated in-line as we
+    // assign positions so two clients added in the same frame don't collide
+    // (Commands::spawn doesn't materialize until the next system run).
+    let mut occupied: HashSet<HexPosition> = existing_units.iter().copied().collect();
+    let mut rng = rand::thread_rng();
+
     for client_entity in &new_clients {
         let color_index = color_counter.next_index();
         let player_entity = commands
@@ -110,27 +113,28 @@ pub fn handle_new_clients(
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
         let starting_units = ["warrior", "settler"];
-        for unit_type in starting_units {
+        let positions = pick_starting_positions(&occupied, starting_units.len(), &mut rng);
+
+        for (unit_type, pos) in starting_units.iter().zip(positions.iter()) {
             let type_id = registry
                 .id_of(unit_type)
                 .unwrap_or_else(|| panic!("missing unit definition for {unit_type}"));
             let definition = registry
                 .get(&type_id)
                 .unwrap_or_else(|| panic!("registry has id but no definition for {unit_type}"));
-            let x = rand::thread_rng().gen_range(-2..=2);
-            let y = rand::thread_rng().gen_range(-2..=2);
             let unit_entity = commands
                 .spawn((
                     Unit { type_id },
-                    HexPosition::new(x, y),
+                    *pos,
                     Owner(player_entity),
                     ColorIndex(color_index),
                     Health::full(definition.hp),
                 ))
                 .id();
+            occupied.insert(*pos);
             println!(
-                "Spawned {unit_type}: {unit_entity} (HP {}) for player: {player_entity}",
-                definition.hp
+                "Spawned {unit_type}: {unit_entity} at ({}, {}) (HP {}) for player: {player_entity}",
+                pos.q, pos.r, definition.hp
             );
         }
     }
