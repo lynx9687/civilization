@@ -13,6 +13,7 @@ const UNIT_SPRITE_SIZE: f32 = 50.0;
 const CITY_SIZE: f32 = 28.0;
 const UNIT_MOVE_SPEED: f32 = 300.0;
 const UNIT_ROTATION_SPEED: f32 = std::f32::consts::PI * 1.0;
+const HEX_TINT_STRENGTH: f32 = 2.0;
 
 /// Handles to shared hex materials for highlighting.
 #[derive(Resource)]
@@ -29,26 +30,85 @@ pub fn setup_hex_materials(
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let default_texture = asset_server.load("textures/tiles/grass.png");
     let hex_materials = HexMaterials {
-        default: materials.add(ColorMaterial {
-            texture: Some(asset_server.load("textures/tiles/grass.png")),
-            ..default()
-        }),
-        hovered: materials.add(Color::srgb(0.3, 0.3, 0.4)),
-        valid_move: materials.add(Color::srgb(0.2, 0.4, 0.2)),
+        default: materials.add(hex_material(default_texture.clone(), Color::WHITE)),
+        hovered: materials.add(tinted_hex_material(default_texture.clone(), 0.3, 0.3, 0.4)),
+        valid_move: materials.add(tinted_hex_material(default_texture.clone(), 0.2, 0.4, 0.2)),
         claimed: vec![
-            materials.add(Color::srgb(0.35, 0.12, 0.12)),
-            materials.add(Color::srgb(0.10, 0.16, 0.36)),
-            materials.add(Color::srgb(0.10, 0.30, 0.12)),
-            materials.add(Color::srgb(0.36, 0.32, 0.10)),
-            materials.add(Color::srgb(0.34, 0.12, 0.34)),
-            materials.add(Color::srgb(0.10, 0.32, 0.34)),
-            materials.add(Color::srgb(0.36, 0.22, 0.10)),
-            materials.add(Color::srgb(0.22, 0.12, 0.36)),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.35,
+                0.12,
+                0.12,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.10,
+                0.16,
+                0.36,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.10,
+                0.30,
+                0.12,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.36,
+                0.32,
+                0.10,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.34,
+                0.12,
+                0.34,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.10,
+                0.32,
+                0.34,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.36,
+                0.22,
+                0.10,
+            )),
+            materials.add(tinted_hex_material(
+                default_texture.clone(),
+                0.22,
+                0.12,
+                0.36,
+            )),
         ],
-        valid_attack: materials.add(Color::srgb(0.5, 0.15, 0.15)),
+        valid_attack: materials.add(tinted_hex_material(
+            default_texture.clone(),
+            0.5,
+            0.15,
+            0.15,
+        )),
     };
     commands.insert_resource(hex_materials);
+}
+
+fn tinted_hex_material(texture: Handle<Image>, red: f32, green: f32, blue: f32) -> ColorMaterial {
+    let soften = |channel| 0.75 + channel * HEX_TINT_STRENGTH;
+    hex_material(
+        texture,
+        Color::srgb(soften(red), soften(green), soften(blue)),
+    )
+}
+
+fn hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
+    ColorMaterial {
+        color,
+        texture: Some(texture),
+        ..default()
+    }
 }
 
 pub fn spawn_hex_visuals(
