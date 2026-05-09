@@ -662,55 +662,15 @@ mod tests {
         cities.iter(app.world()).count()
     }
 
-    /// Regression test: a unit's own queued MoveTo must not prevent it from resubmitting.
+    /// Regression test: a unit's own queued MoveTo must not block its own
+    /// re-submission to the same target.
     ///
-    /// Scenario:
-    /// 1. Mover queues Move to (-1, 0) — accepted (no conflict).
-    /// 2. Mover resubmits Move to (-1, 0). Without the fix, queued_moves sees the unit's
-    ///    own marker and rejects it; queue_marker is never called so MoveTo is cleared by
-    ///    something else, or the second assert catches the wrong target if we also test a
-    ///    target change.
-    ///
-    /// We test the observable effect of the bug by having a neighbor already queued at
-    /// (1, 0) and then:
-    ///   a) Verify the neighbor's marker correctly blocks a DIFFERENT unit from targeting (1, 0).
-    ///   b) Give mover a MoveTo { (-1, 0) } (via accepted first submission to a free tile),
-    ///      then have the mover resubmit to that same tile. The bug causes rejection because
-    ///      queued_moves sees the mover's own marker. We detect this by also testing that the
-    ///      mover can change to a different free tile after the rejected re-submission — but
-    ///      more directly: if the second submission succeeds, queue_marker runs and replaces
-    ///      the marker; if it fails, the marker stays. We verify via a target change: first
-    ///      get MoveTo(-1,0) accepted, then resubmit to (-1,0) — buggy code rejects it but
-    ///      the marker persists from the first submission, making the test misleading.
-    ///
-    /// Better approach: first accept Move to free tile A, giving mover MoveTo{A}. Then submit
-    /// Move to free tile B (different from A and no neighbor conflict). With the bug, the
-    /// queued_moves query sees mover's own MoveTo{A} but its pos != B, so the check doesn't
-    /// fire — wait, the check is `mv.pos == *target`, so A != B means no conflict is
-    /// reported even with the bug. The bug only fires when re-submitting to the SAME tile.
-    ///
-    /// Clearest observable form: mover has MoveTo{A} (from accepted first move). Player
-    /// resubmits Move to A. Bug: queued_moves sees mover's own MoveTo{A}, pos matches,
-    /// rejects. queue_marker is NOT called. BUT the old MoveTo{A} is still present (not
-    /// cleared because queue_marker never ran). The test using expect().pos == A would pass
-    /// even with the bug. So we need a way to know the observer RAN queue_marker.
-    ///
-    /// Solution: after the re-submission, also submit a Move to a DIFFERENT tile B (free).
-    /// With the bug, the first re-submission (to A) is rejected. queue_marker was not run,
-    /// so the old MoveTo{A} persists into the second submission attempt (to B). The second
-    /// submission (to B) has no queue conflict (B is free), so it succeeds — MoveTo becomes
-    /// {B}. This happens regardless of the bug. No observable difference.
-    ///
-    /// SIMPLEST CLEAR TEST: Don't pre-queue. Submit Move to A (free). Accepted: MoveTo{A}.
-    /// Submit Move to A again. Bug: sees own MoveTo{A}, rejects. The second queue_marker
-    /// is not called. But `queue_marker` first removes MoveTo then inserts the new one.
-    /// If the re-submission were ACCEPTED, queue_marker would run: remove MoveTo then
-    /// insert MoveTo{A} again. Net result: MoveTo{A} present. If REJECTED, queue_marker
-    /// doesn't run: MoveTo{A} still present from before. Either way MoveTo{A} is present.
-    ///
-    /// To detect the bug we need to observe that queue_marker DID run. Since queue_marker
-    /// also removes ALL other markers (AttackTarget, Fortifying etc.), we can insert one
-    /// of those before the re-submission and check it's gone (meaning queue_marker ran).
+    /// Detecting the bug is awkward because `queue_marker` only runs on
+    /// acceptance, so the prior MoveTo persists either way and inspecting
+    /// MoveTo alone tells us nothing. Trick: insert a `Fortifying` sentinel
+    /// on the mover before the re-submission; `queue_marker` strips every
+    /// prior marker when it runs, so the sentinel's absence after re-submit
+    /// proves the action was accepted.
     #[test]
     fn test_handle_unit_action_allows_same_unit_to_change_move_target() {
         use crate::players::PlayerMap;
