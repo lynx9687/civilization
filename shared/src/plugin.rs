@@ -21,6 +21,7 @@ impl Plugin for SharedPlugin {
             .replicate::<Unit>()
             .replicate::<Owner>()
             .replicate::<ColorIndex>()
+            .replicate::<MoveTo>()
             .replicate::<City>()
             .replicate::<CityStats>()
             .replicate::<CityProduction>()

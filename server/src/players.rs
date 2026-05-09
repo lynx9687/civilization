@@ -112,7 +112,7 @@ pub fn handle_new_clients(
 
         println!("Player joined (color {color_index}), entity: {player_entity}");
 
-        let starting_units = ["warrior", "archer", "settler"];
+        let starting_units = ["warrior", "archer", "settler", "knight", "cavalry"];
         let positions = pick_starting_positions(&occupied, starting_units.len(), &mut rng);
 
         for (unit_type, pos) in starting_units.iter().zip(positions.iter()) {

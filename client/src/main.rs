@@ -42,7 +42,10 @@ fn main() {
 
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(AssetPlugin {
+                file_path: format!("{}/../assets", env!("CARGO_MANIFEST_DIR")),
+                ..default()
+            }),
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedPlugin,
