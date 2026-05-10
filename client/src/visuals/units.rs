@@ -4,7 +4,7 @@ use shared::{
     components::player_color,
     hex::{HexPosition, hex_to_pixel},
     unit_definition::UnitRegistry,
-    units::{ColorIndex, Health, MoveTo, Unit},
+    units::{AttackTarget, ColorIndex, Health, MoveTo, Unit},
 };
 
 use crate::HEX_SIZE;
@@ -141,12 +141,22 @@ pub fn spawn_unit_visuals(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn update_unit_positions(
     time: Res<Time>,
-    mut units: Query<(&HexPosition, Option<&MoveTo>, &mut Transform, &UnitVisual), With<Unit>>,
+    mut units: Query<
+        (
+            &HexPosition,
+            Option<&MoveTo>,
+            Option<&AttackTarget>,
+            &mut Transform,
+            &UnitVisual,
+        ),
+        With<Unit>,
+    >,
     mut sprite_roots: Query<&mut Transform, UnitSpriteRootFilter>,
 ) {
-    for (pos, move_to, mut transform, visual) in &mut units {
+    for (pos, move_to, attack_target, mut transform, visual) in &mut units {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
         let current = transform.translation.truncate();
         let delta = pixel - current;
@@ -162,10 +172,14 @@ pub fn update_unit_positions(
             transform.translation.y += step.y;
         }
 
-        if let Some(move_to) = move_to
+        let facing_target = move_to
+            .map(|move_to| move_to.pos)
+            .or_else(|| attack_target.map(|attack_target| attack_target.pos));
+
+        if let Some(target_pos) = facing_target
             && let Ok(mut sprite_transform) = sprite_roots.get_mut(visual.sprite_root)
         {
-            rotate_toward_move_target(&time, pos, move_to, &mut sprite_transform);
+            rotate_toward_target(&time, pos, &target_pos, &mut sprite_transform);
         }
     }
 }
@@ -217,14 +231,14 @@ fn unit_sprite(image: Handle<Image>, color: Color) -> Sprite {
     }
 }
 
-fn rotate_toward_move_target(
+fn rotate_toward_target(
     time: &Time,
     pos: &HexPosition,
-    move_to: &MoveTo,
+    target: &HexPosition,
     transform: &mut Transform,
 ) {
     let from = hex_to_pixel(pos, HEX_SIZE);
-    let to = hex_to_pixel(&move_to.pos, HEX_SIZE);
+    let to = hex_to_pixel(target, HEX_SIZE);
     let direction = to - from;
 
     if direction.length_squared() == 0.0 {

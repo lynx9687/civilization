@@ -22,6 +22,7 @@ impl Plugin for SharedPlugin {
             .replicate::<Owner>()
             .replicate::<ColorIndex>()
             .replicate::<MoveTo>()
+            .replicate::<AttackTarget>()
             .replicate::<City>()
             .replicate::<CityStats>()
             .replicate::<CityProduction>()
