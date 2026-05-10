@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate team-color mask PNGs from red-dominant pixels in unit sprites."""
+"""Generate team-color mask PNGs from red-dominant pixels in sprites."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 
-DEFAULT_UNITS = ("archer", "cavalry", "knight", "settler", "warrior")
+DEFAULT_SPRITES = ("archer", "cavalry", "knight", "settler", "warrior")
 
 
 def is_mask_pixel(
@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         "--input-dir",
         type=Path,
         default=Path("assets/textures/units"),
-        help="Directory containing unit sprite PNGs.",
+        help="Directory containing sprite PNGs.",
     )
     parser.add_argument(
         "--output-dir",
@@ -86,8 +86,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--units",
         nargs="+",
-        default=list(DEFAULT_UNITS),
-        help="Unit base names to convert, without .png.",
+        dest="sprites",
+        help="Deprecated alias for --sprites.",
+    )
+    parser.add_argument(
+        "--sprites",
+        nargs="+",
+        default=None,
+        help="Sprite base names to convert, without .png.",
     )
     parser.add_argument(
         "--suffix",
@@ -118,10 +124,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     output_dir = args.output_dir or args.input_dir
+    sprites = args.sprites or list(DEFAULT_SPRITES)
 
-    for unit in args.units:
-        source = args.input_dir / f"{unit}.png"
-        output = output_dir / f"{unit}{args.suffix}.png"
+    for sprite in sprites:
+        source = args.input_dir / f"{sprite}.png"
+        output = output_dir / f"{sprite}{args.suffix}.png"
 
         if not source.exists():
             raise FileNotFoundError(f"Missing source sprite: {source}")
@@ -133,7 +140,7 @@ def main() -> None:
             min_margin=args.min_margin,
             min_ratio=args.min_ratio,
         )
-        print(f"{unit}: {selected} mask pixels -> {output}")
+        print(f"{sprite}: {selected} mask pixels -> {output}")
 
 
 if __name__ == "__main__":
