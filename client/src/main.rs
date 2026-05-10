@@ -1,3 +1,4 @@
+mod audio;
 mod camera;
 mod input;
 mod ui;
@@ -17,6 +18,7 @@ use bevy_replicon_renet::{
 };
 use shared::{events::*, plugin::SharedPlugin};
 
+use audio::*;
 use camera::*;
 use input::*;
 use ui::*;
@@ -63,6 +65,7 @@ fn main() {
                 setup_hex_materials,
                 connect_to_server,
                 spawn_turn_ui,
+                play_background_music,
             ),
         )
         .add_observer(on_your_player)
