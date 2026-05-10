@@ -77,6 +77,7 @@ fn main() {
                 spawn_city_visuals,
                 update_city_visuals,
                 update_unit_positions,
+                update_unit_health_bars,
                 move_camera_with_keyboard,
                 zoom_camera_with_scroll,
                 update_hex_highlights,
