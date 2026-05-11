@@ -332,3 +332,20 @@ pub fn reset_submission_on_new_turn(
         }
     }
 }
+
+pub struct InputPlugin;
+
+impl Plugin for InputPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                handle_left_click,
+                handle_right_click,
+                handle_escape_key,
+                prune_stale_selection,
+                reset_submission_on_new_turn,
+            ),
+        );
+    }
+}

@@ -7,7 +7,7 @@ use shared::{
     units::*,
 };
 
-use crate::HEX_SIZE;
+use crate::{HEX_SIZE, input::update_hex_highlights};
 
 const SQUARE_SIZE: f32 = 18.0;
 const CITY_SIZE: f32 = 28.0;
@@ -131,5 +131,22 @@ pub fn update_unit_positions(
             transform.translation.x += step.x;
             transform.translation.y += step.y;
         }
+    }
+}
+
+pub struct VisualsPlugin;
+
+impl Plugin for VisualsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                spawn_hex_visuals,
+                spawn_unit_visuals,
+                spawn_city_visuals,
+                update_unit_positions,
+                update_hex_highlights,
+            ),
+        );
     }
 }

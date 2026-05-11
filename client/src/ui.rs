@@ -614,3 +614,25 @@ pub fn handle_production_button_click(
     };
     commands.client_trigger(CityActionEvent { city, action });
 }
+
+pub struct UiPlugin;
+
+impl Plugin for UiPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(handle_verb_button_click)
+            .add_observer(handle_production_button_click)
+            .add_systems(
+                Update,
+                (
+                    populate_production_bar,
+                    update_turn_ui,
+                    update_city_ui,
+                    update_action_bar,
+                    update_production_bar,
+                    finish_turn_trigger_system.run_if(in_state(PlayerTurnPhase::Input)),
+                    finish_turn_visual_system,
+                    reset_player_turn_phase,
+                ),
+            );
+    }
+}

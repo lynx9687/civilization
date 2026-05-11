@@ -44,6 +44,9 @@ fn main() {
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedPlugin,
+            InputPlugin,
+            UiPlugin,
+            VisualsPlugin,
         ))
         .insert_resource(ServerAddr(addr))
         .init_resource::<LastSubmittedTurn>()
@@ -53,31 +56,6 @@ fn main() {
         .init_state::<PlayerTurnPhase>()
         .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
-        .add_observer(handle_verb_button_click)
-        .add_observer(handle_production_button_click)
-        .add_systems(
-            Update,
-            (
-                spawn_hex_visuals,
-                spawn_unit_visuals,
-                spawn_city_visuals,
-                update_unit_positions,
-                update_hex_highlights,
-                handle_left_click,
-                handle_right_click,
-                handle_escape_key,
-                prune_stale_selection,
-                reset_submission_on_new_turn,
-                populate_production_bar,
-                update_turn_ui,
-                update_city_ui,
-                update_action_bar,
-                update_production_bar,
-                finish_turn_trigger_system.run_if(in_state(PlayerTurnPhase::Input)),
-                finish_turn_visual_system,
-                reset_player_turn_phase,
-            ),
-        )
         .run();
 }
 
