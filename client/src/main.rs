@@ -1,3 +1,5 @@
+mod audio;
+mod camera;
 mod input;
 mod ui;
 mod visuals;
@@ -16,6 +18,8 @@ use bevy_replicon_renet::{
 };
 use shared::{events::*, plugin::SharedPlugin};
 
+use audio::*;
+use camera::*;
 use input::*;
 use ui::*;
 use visuals::*;
@@ -40,7 +44,10 @@ fn main() {
 
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(AssetPlugin {
+                file_path: format!("{}/../assets", env!("CARGO_MANIFEST_DIR")),
+                ..default()
+            }),
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedPlugin,
@@ -53,9 +60,28 @@ fn main() {
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
         .init_resource::<UiState>()
+        .init_resource::<CameraZoom>()
+        .add_systems(
+            Startup,
+            (
+                setup_camera,
+                setup_hex_materials,
+                connect_to_server,
+                spawn_turn_ui,
+                play_background_music,
+            ),
+        )
         .init_state::<PlayerTurnPhase>()
-        .add_systems(Startup, (setup_camera, connect_to_server, spawn_turn_ui))
         .add_observer(on_your_player)
+        .add_systems(
+            Update,
+            (
+                update_city_visuals,
+                update_unit_health_bars,
+                move_camera_with_keyboard,
+                zoom_camera_with_scroll,
+            ),
+        )
         .run();
 }
 

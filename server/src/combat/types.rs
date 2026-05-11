@@ -1,3 +1,9 @@
+//! Plain data shapes shared between the combat algorithm and its ECS wrapper.
+//! `UnitSnapshot` is the per-unit input the wrapper builds from Bevy queries;
+//! `CombatDeltas` is the output the algorithm returns and the wrapper applies
+//! back to ECS components. Keeping these out of `algorithm.rs` lets the pure
+//! function avoid Bevy types beyond `Entity`.
+
 use bevy::prelude::Entity;
 use shared::hex::HexPosition;
 use std::collections::{HashMap, HashSet};

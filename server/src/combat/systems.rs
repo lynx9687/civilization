@@ -29,12 +29,6 @@ pub fn resolve_ranged_attacks(
             commands.entity(attacker_entity).remove::<AttackTarget>();
             continue;
         };
-        if def.attack_range <= 1 {
-            // Melee Attack should have been gated out by available_verbs;
-            // safety net: just consume the marker.
-            commands.entity(attacker_entity).remove::<AttackTarget>();
-            continue;
-        }
 
         // Find the live unit at the target tile.
         let target_entity = unit_positions
