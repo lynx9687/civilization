@@ -29,11 +29,20 @@ pub struct Controller {
     pub selected_city: Option<Entity>,
 }
 
-/// Selection / targeting state. Drives the action bar visibility and
-/// the map-highlight overlay. Idle = no unit selected.
-#[derive(Resource, Default)]
+/// Selection / targeting state and turn UI mode.
+/// Idle / selection is available while the local player can act.
+/// Locked is used once the player has finished their turn.
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum UiState {
+    Input {
+        selection: InputSelection,
+    },
     #[default]
+    Locked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InputSelection {
     Idle,
     UnitSelected {
         unit: Entity,
@@ -44,7 +53,20 @@ pub enum UiState {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+impl UiState {
+    pub fn selection(&self) -> Option<&InputSelection> {
+        match self {
+            UiState::Input { selection } => Some(selection),
+            UiState::Locked => None,
+        }
+    }
+
+    pub fn is_locked(&self) -> bool {
+        matches!(self, UiState::Locked)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Copy, Debug)]
 pub enum TargetableVerb {
     Move,
     Attack,
@@ -81,7 +103,7 @@ pub fn update_hex_highlights(
     mut tiles: TileHighlightQuery,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
-    ui_state: Res<UiState>,
+    ui_state: Res<State<UiState>>,
     units: Query<(&Unit, &HexPosition, &Owner)>,
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
@@ -96,9 +118,9 @@ pub fn update_hex_highlights(
     };
 
     // compute the current overlay set based on UiState
-    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match *ui_state {
-        UiState::Targeting { unit, verb } => 'overlay: {
-            let Ok((u, pos, _)) = units.get(unit) else {
+    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match ui_state.selection() {
+        Some(InputSelection::Targeting { unit, verb }) => 'overlay: {
+            let Ok((u, pos, _)) = units.get(*unit) else {
                 // stale unit ref — fall through with no overlay so the loop repaints to default
                 break 'overlay (Vec::new(), Vec::new());
             };
@@ -161,7 +183,8 @@ pub fn handle_left_click(
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
-    mut ui_state: ResMut<UiState>,
+    ui_state: Res<State<UiState>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     registry: Res<UnitRegistry>,
 ) {
@@ -195,47 +218,67 @@ pub fn handle_left_click(
         None
     };
 
-    match *ui_state {
-        UiState::Idle => {
+    if ui_state.is_locked() {
+        return;
+    }
+
+    match ui_state.selection() {
+        Some(InputSelection::Idle) => {
             if let Some(entity) = owned_unit_at(target) {
                 controller.selected_city = None;
-                *ui_state = UiState::UnitSelected { unit: entity };
+                next_ui_state.set(UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: entity },
+                });
             }
         }
-        UiState::UnitSelected { unit: _ } => {
+        Some(InputSelection::UnitSelected { .. }) => {
             if let Some(entity) = owned_unit_at(target) {
                 controller.selected_city = None;
-                *ui_state = UiState::UnitSelected { unit: entity };
+                next_ui_state.set(UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: entity },
+                });
             } else {
-                *ui_state = UiState::Idle;
+                next_ui_state.set(UiState::Input {
+                    selection: InputSelection::Idle,
+                });
             }
         }
-        UiState::Targeting { unit, verb } => {
+        Some(InputSelection::Targeting { unit, verb }) => {
             // clicking another owned unit always switches selection
             if let Some(entity) = owned_unit_at(target) {
                 controller.selected_city = None;
-                *ui_state = UiState::UnitSelected { unit: entity };
+                next_ui_state.set(UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: entity },
+                });
                 return;
             }
-            let Ok((_, u, _, pos)) = units.get(unit) else {
-                *ui_state = UiState::Idle;
+            let Ok((_, u, _, pos)) = units.get(*unit) else {
+                next_ui_state.set(UiState::Input {
+                    selection: InputSelection::Idle,
+                });
                 return;
             };
             let Some(def) = registry.get(&u.type_id) else {
-                *ui_state = UiState::Idle;
+                next_ui_state.set(UiState::Input {
+                    selection: InputSelection::Idle,
+                });
                 return;
             };
             match verb {
                 TargetableVerb::Move => {
                     if is_within_move_range(pos, &target, def.move_budget) {
                         commands.client_trigger(UnitActionEvent {
-                            unit,
+                            unit: *unit,
                             action: UnitAction::Move { target },
                         });
-                        *ui_state = UiState::Idle;
+                        next_ui_state.set(UiState::Input {
+                            selection: InputSelection::Idle,
+                        });
                     } else {
                         // invalid hex → fall back to selection state, bar stays
-                        *ui_state = UiState::UnitSelected { unit };
+                        next_ui_state.set(UiState::Input {
+                            selection: InputSelection::UnitSelected { unit: *unit },
+                        });
                     }
                 }
                 TargetableVerb::Attack => {
@@ -245,16 +288,21 @@ pub fn handle_left_click(
                         .any(|(_, _, owner, p)| *p == target && owner.0 != player_entity);
                     if is_within_attack_range(pos, &target, def.attack_range) && enemy_here {
                         commands.client_trigger(UnitActionEvent {
-                            unit,
+                            unit: *unit,
                             action: UnitAction::Attack { target },
                         });
-                        *ui_state = UiState::Idle;
+                        next_ui_state.set(UiState::Input {
+                            selection: InputSelection::Idle,
+                        });
                     } else {
-                        *ui_state = UiState::UnitSelected { unit };
+                        next_ui_state.set(UiState::Input {
+                            selection: InputSelection::UnitSelected { unit: *unit },
+                        });
                     }
                 }
             }
         }
+        None => {}
     }
 }
 
@@ -266,7 +314,8 @@ pub fn handle_right_click(
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
     mut controller: ResMut<Controller>,
-    mut ui_state: ResMut<UiState>,
+    ui_state: Res<State<UiState>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
     cities: Query<(Entity, &HexPosition), With<City>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
@@ -282,6 +331,10 @@ pub fn handle_right_click(
         return;
     }
 
+    if ui_state.is_locked() {
+        return;
+    }
+
     let Some(target) = get_cursor_hex(&cursor) else {
         return;
     };
@@ -289,8 +342,9 @@ pub fn handle_right_click(
     // handle clicking city
     for (city_entity, pos) in cities {
         if *pos == target {
-            // controller.selected_unit = None;
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
             controller.selected_city = Some(city_entity);
             println!("Selected city {city_entity}");
             return;
@@ -298,25 +352,32 @@ pub fn handle_right_click(
     }
 }
 
-pub fn handle_escape_key(keys: Res<ButtonInput<KeyCode>>, mut ui_state: ResMut<UiState>) {
+pub fn handle_escape_key(keys: Res<ButtonInput<KeyCode>>, ui_state: Res<State<UiState>>, mut next_ui_state: ResMut<NextState<UiState>>) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    *ui_state = match *ui_state {
-        UiState::Targeting { unit, .. } => UiState::UnitSelected { unit },
-        _ => UiState::Idle,
+    let new_state = match ui_state.selection() {
+        Some(InputSelection::Targeting { unit, .. }) => UiState::Input {
+            selection: InputSelection::UnitSelected { unit: *unit },
+        },
+        _ => UiState::Input {
+            selection: InputSelection::Idle,
+        },
     };
+    next_ui_state.set(new_state);
 }
 
 // drops UiState back to Idle if the unit it references no longer exists
-pub fn prune_stale_selection(mut ui_state: ResMut<UiState>, units: Query<(), With<Unit>>) {
-    let referenced = match *ui_state {
-        UiState::Idle => return,
-        UiState::UnitSelected { unit } => unit,
-        UiState::Targeting { unit, .. } => unit,
+pub fn prune_stale_selection(ui_state: Res<State<UiState>>, mut next_ui_state: ResMut<NextState<UiState>>, units: Query<(), With<Unit>>) {
+    let referenced = match ui_state.selection() {
+        Some(InputSelection::UnitSelected { unit }) => *unit,
+        Some(InputSelection::Targeting { unit, .. }) => *unit,
+        _ => return,
     };
     if units.get(referenced).is_err() {
-        *ui_state = UiState::Idle;
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
     }
 }
 

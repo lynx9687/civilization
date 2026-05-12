@@ -59,7 +59,6 @@ fn main() {
         .init_resource::<LastSubmittedTurn>()
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
-        .init_resource::<UiState>()
         .init_resource::<CameraZoom>()
         .add_systems(
             Startup,
@@ -71,7 +70,7 @@ fn main() {
                 play_background_music,
             ),
         )
-        .init_state::<PlayerTurnPhase>()
+        .init_state::<UiState>()
         .add_observer(on_your_player)
         .add_systems(
             Update,

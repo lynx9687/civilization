@@ -8,7 +8,7 @@ use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
 use crate::LocalPlayerColor;
-use crate::input::{Controller, LastSubmittedTurn, TargetableVerb, UiState};
+use crate::input::{Controller, InputSelection, LastSubmittedTurn, TargetableVerb, UiState};
 
 pub struct ColorState {
     pub idle: Color,
@@ -175,20 +175,12 @@ pub fn spawn_turn_ui(mut commands: Commands) {
     ));
 }
 
-#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub enum PlayerTurnPhase {
-    #[default]
-    Input,
-    Waiting,
-}
-
 pub fn finish_turn_trigger_system(
     mut commands: Commands,
     interaction_query: Query<&Interaction, (With<FinishTurnButton>, Changed<Interaction>)>,
-    mut next_phase: ResMut<NextState<PlayerTurnPhase>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
-    mut ui_state: ResMut<UiState>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -199,8 +191,7 @@ pub fn finish_turn_trigger_system(
             if last_submitted.0 != Some(state.turn_number) {
                 commands.client_trigger(FinishTurn);
                 last_submitted.0 = Some(state.turn_number);
-                *ui_state = UiState::Idle;
-                next_phase.set(PlayerTurnPhase::Waiting);
+                next_ui_state.set(UiState::Locked);
             }
         }
     }
@@ -211,12 +202,12 @@ pub fn finish_turn_visual_system(
         (&Interaction, &mut BackgroundColor, &mut BorderColor),
         With<FinishTurnButton>,
     >,
-    phase: Res<State<PlayerTurnPhase>>,
+    ui_state: Res<State<UiState>>,
 ) {
     let thm = &theme::FINISH_BUTTON;
 
     for (interaction, mut bg, mut border) in &mut button_query {
-        if *phase.get() == PlayerTurnPhase::Waiting {
+        if ui_state.is_locked() {
             *bg = thm.background.waiting.into();
             *border = thm.border.waiting.into();
             continue;
@@ -239,12 +230,14 @@ pub fn finish_turn_visual_system(
     }
 }
 
-pub fn reset_player_turn_phase(
-    mut next_phase: ResMut<NextState<PlayerTurnPhase>>,
+pub fn reset_ui_state_on_turn_state_change(
+    mut next_ui_state: ResMut<NextState<UiState>>,
     turn_state: Query<&TurnState, Changed<TurnState>>,
 ) {
     if !turn_state.is_empty() {
-        next_phase.set(PlayerTurnPhase::Input);
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
     }
 }
 
@@ -433,7 +426,7 @@ pub fn update_production_bar(
 
 // reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
 pub fn update_action_bar(
-    ui_state: Res<UiState>,
+    ui_state: Res<State<UiState>>,
     mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
     mut buttons: Query<(&VerbButton, &mut BackgroundColor)>,
     units: Query<&Unit>,
@@ -442,15 +435,15 @@ pub fn update_action_bar(
     if !ui_state.is_changed() {
         return;
     }
-    let unit_entity = match *ui_state {
-        UiState::Idle => {
+    let unit_entity = match ui_state.selection() {
+        Some(InputSelection::Idle) | None => {
             for mut node in &mut bars {
                 node.display = Display::None;
             }
             return;
         }
-        UiState::UnitSelected { unit } => unit,
-        UiState::Targeting { unit, .. } => unit,
+        Some(InputSelection::UnitSelected { unit }) => *unit,
+        Some(InputSelection::Targeting { unit, .. }) => *unit,
     };
 
     for mut node in &mut bars {
@@ -490,7 +483,8 @@ pub fn handle_verb_button_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     buttons: Query<&VerbButton>,
-    mut ui_state: ResMut<UiState>,
+    ui_state: Res<State<UiState>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
     units: Query<&Unit>,
     registry: Res<UnitRegistry>,
     turn_state: Query<&TurnState>,
@@ -511,10 +505,10 @@ pub fn handle_verb_button_click(
         return;
     }
 
-    let unit_entity = match *ui_state {
-        UiState::UnitSelected { unit } => unit,
-        UiState::Targeting { unit, .. } => unit,
-        UiState::Idle => return,
+    let unit_entity = match ui_state.selection() {
+        Some(InputSelection::UnitSelected { unit }) => *unit,
+        Some(InputSelection::Targeting { unit, .. }) => *unit,
+        _ => return,
     };
 
     let Ok(unit) = units.get(unit_entity) else {
@@ -529,43 +523,54 @@ pub fn handle_verb_button_click(
 
     match verb {
         UnitVerb::Move => {
-            *ui_state = match *ui_state {
-                // re-clicking the targeting verb toggles back to UnitSelected
-                UiState::Targeting {
+            next_ui_state.set(match ui_state.selection() {
+                Some(InputSelection::Targeting {
                     unit,
                     verb: TargetableVerb::Move,
-                } => UiState::UnitSelected { unit },
-                _ => UiState::Targeting {
-                    unit: unit_entity,
-                    verb: TargetableVerb::Move,
+                }) => UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: *unit },
                 },
-            };
+                _ => UiState::Input {
+                    selection: InputSelection::Targeting {
+                        unit: unit_entity,
+                        verb: TargetableVerb::Move,
+                    },
+                },
+            });
         }
         UnitVerb::Attack => {
-            *ui_state = match *ui_state {
-                UiState::Targeting {
+            next_ui_state.set(match ui_state.selection() {
+                Some(InputSelection::Targeting {
                     unit,
                     verb: TargetableVerb::Attack,
-                } => UiState::UnitSelected { unit },
-                _ => UiState::Targeting {
-                    unit: unit_entity,
-                    verb: TargetableVerb::Attack,
+                }) => UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: *unit },
                 },
-            };
+                _ => UiState::Input {
+                    selection: InputSelection::Targeting {
+                        unit: unit_entity,
+                        verb: TargetableVerb::Attack,
+                    },
+                },
+            });
         }
         UnitVerb::Fortify => {
             commands.client_trigger(UnitActionEvent {
                 unit: unit_entity,
                 action: UnitAction::Fortify,
             });
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
         }
         UnitVerb::Skip => {
             commands.client_trigger(UnitActionEvent {
                 unit: unit_entity,
                 action: UnitAction::Skip,
             });
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
         }
         UnitVerb::Build => {
             // single-target stub: only one project per unit today (settler→city);
@@ -579,7 +584,9 @@ pub fn handle_verb_button_click(
                     project: project.clone(),
                 },
             });
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
         }
     }
 }
@@ -629,9 +636,9 @@ impl Plugin for UiPlugin {
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
-                    finish_turn_trigger_system.run_if(in_state(PlayerTurnPhase::Input)),
+                    finish_turn_trigger_system,
                     finish_turn_visual_system,
-                    reset_player_turn_phase,
+                    reset_ui_state_on_turn_state_change,
                 ),
             );
     }
