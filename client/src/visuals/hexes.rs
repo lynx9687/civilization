@@ -1,12 +1,12 @@
 use bevy::prelude::*;
 use shared::{
-    components::HexTile,
+    components::{HexTile, PLAYER_COLORS},
     hex::{HexPosition, hex_to_pixel},
 };
 
 use crate::HEX_SIZE;
 
-const HEX_TINT_STRENGTH: f32 = 2.0;
+const HEX_TINT_STRENGTH: f32 = 1.0;
 
 /// Handles to shared hex materials for highlighting.
 #[derive(Resource)]
@@ -26,63 +26,21 @@ pub fn setup_hex_materials(
     let default_texture = asset_server.load("textures/tiles/grass.png");
     let hex_materials = HexMaterials {
         default: materials.add(hex_material(default_texture.clone(), Color::WHITE)),
-        hovered: materials.add(tinted_hex_material(default_texture.clone(), 0.3, 0.3, 0.4)),
-        valid_move: materials.add(tinted_hex_material(default_texture.clone(), 0.2, 0.4, 0.2)),
-        claimed: vec![
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.35,
-                0.12,
-                0.12,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.10,
-                0.16,
-                0.36,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.10,
-                0.30,
-                0.12,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.36,
-                0.32,
-                0.10,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.34,
-                0.12,
-                0.34,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.10,
-                0.32,
-                0.34,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.36,
-                0.22,
-                0.10,
-            )),
-            materials.add(tinted_hex_material(
-                default_texture.clone(),
-                0.22,
-                0.12,
-                0.36,
-            )),
-        ],
+        hovered: materials.add(tinted_hex_material(
+            default_texture.clone(),
+            Color::srgb(0.8, 0.8, 0.9),
+        )),
+        valid_move: materials.add(tinted_hex_material(
+            default_texture.clone(),
+            Color::srgb(0.4, 0.8, 0.4),
+        )),
+        claimed: PLAYER_COLORS
+            .iter()
+            .map(|color| materials.add(tinted_hex_material(default_texture.clone(), *color)))
+            .collect(),
         valid_attack: materials.add(tinted_hex_material(
             default_texture.clone(),
-            0.5,
-            0.15,
-            0.15,
+            Color::srgb(0.8, 0.3, 0.3),
         )),
     };
     commands.insert_resource(hex_materials);
@@ -105,11 +63,16 @@ pub fn spawn_hex_visuals(
     }
 }
 
-fn tinted_hex_material(texture: Handle<Image>, red: f32, green: f32, blue: f32) -> ColorMaterial {
-    let soften = |channel| 0.75 + channel * HEX_TINT_STRENGTH;
+fn tinted_hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
+    let srgba_color = color.to_srgba();
+    let soften = |channel| 0.5 + channel * HEX_TINT_STRENGTH;
     hex_material(
         texture,
-        Color::srgb(soften(red), soften(green), soften(blue)),
+        Color::srgb(
+            soften(srgba_color.red),
+            soften(srgba_color.green),
+            soften(srgba_color.blue),
+        ),
     )
 }
 
