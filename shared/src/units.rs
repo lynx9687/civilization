@@ -52,7 +52,7 @@ pub struct Fortifying;
 #[derive(Component, Debug)]
 pub struct Skipping;
 
-#[derive(Component, Debug)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct AttackTarget {
     pub pos: HexPosition,
 }
