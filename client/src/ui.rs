@@ -628,6 +628,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(handle_verb_button_click)
             .add_observer(handle_production_button_click)
+            .add_systems(Startup, spawn_turn_ui)
             .add_systems(
                 Update,
                 (

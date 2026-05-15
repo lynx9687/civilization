@@ -54,6 +54,7 @@ fn main() {
             InputPlugin,
             UiPlugin,
             VisualsPlugin,
+            CameraPlugin,
         ))
         .insert_resource(ServerAddr(addr))
         .init_resource::<LastSubmittedTurn>()
@@ -63,10 +64,7 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_camera,
-                setup_hex_materials,
                 connect_to_server,
-                spawn_turn_ui,
                 play_background_music,
             ),
         )
@@ -77,8 +75,6 @@ fn main() {
             (
                 update_city_visuals,
                 update_unit_health_bars,
-                move_camera_with_keyboard,
-                zoom_camera_with_scroll,
             ),
         )
         .run();
