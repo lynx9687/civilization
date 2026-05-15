@@ -44,13 +44,8 @@ pub enum UiState {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InputSelection {
     Idle,
-    UnitSelected {
-        unit: Entity,
-    },
-    Targeting {
-        unit: Entity,
-        verb: TargetableVerb,
-    },
+    UnitSelected { unit: Entity },
+    Targeting { unit: Entity, verb: TargetableVerb },
 }
 
 impl UiState {
@@ -118,43 +113,44 @@ pub fn update_hex_highlights(
     };
 
     // compute the current overlay set based on UiState
-    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match ui_state.selection() {
-        Some(InputSelection::Targeting { unit, verb }) => 'overlay: {
-            let Ok((u, pos, _)) = units.get(*unit) else {
-                // stale unit ref — fall through with no overlay so the loop repaints to default
-                break 'overlay (Vec::new(), Vec::new());
-            };
-            let Some(def) = registry.get(&u.type_id) else {
-                break 'overlay (Vec::new(), Vec::new());
-            };
-            match verb {
-                TargetableVerb::Move => {
-                    let moves = all_tiles
-                        .iter()
-                        .filter(|t| is_within_move_range(pos, t, def.move_budget))
-                        .copied()
-                        .collect();
-                    (moves, Vec::new())
-                }
-                TargetableVerb::Attack => {
-                    // only enemy-occupied hexes within range light up
-                    let attacks = units
-                        .iter()
-                        .filter_map(|(_, p, owner)| {
-                            let is_enemy = owner.0 != player_entity;
-                            if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
-                                Some(*p)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    (Vec::new(), attacks)
+    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) =
+        match ui_state.selection() {
+            Some(InputSelection::Targeting { unit, verb }) => 'overlay: {
+                let Ok((u, pos, _)) = units.get(*unit) else {
+                    // stale unit ref — fall through with no overlay so the loop repaints to default
+                    break 'overlay (Vec::new(), Vec::new());
+                };
+                let Some(def) = registry.get(&u.type_id) else {
+                    break 'overlay (Vec::new(), Vec::new());
+                };
+                match verb {
+                    TargetableVerb::Move => {
+                        let moves = all_tiles
+                            .iter()
+                            .filter(|t| is_within_move_range(pos, t, def.move_budget))
+                            .copied()
+                            .collect();
+                        (moves, Vec::new())
+                    }
+                    TargetableVerb::Attack => {
+                        // only enemy-occupied hexes within range light up
+                        let attacks = units
+                            .iter()
+                            .filter_map(|(_, p, owner)| {
+                                let is_enemy = owner.0 != player_entity;
+                                if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
+                                    Some(*p)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        (Vec::new(), attacks)
+                    }
                 }
             }
-        }
-        _ => (Vec::new(), Vec::new()),
-    };
+            _ => (Vec::new(), Vec::new()),
+        };
 
     for (pos, owner, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
@@ -331,6 +327,8 @@ pub fn handle_right_click(
         return;
     }
 
+    // Potentially one could allow viewing information in UiState::Locked.
+    // However, this was impossible even before UiState refactor.
     if ui_state.is_locked() {
         return;
     }
@@ -352,7 +350,11 @@ pub fn handle_right_click(
     }
 }
 
-pub fn handle_escape_key(keys: Res<ButtonInput<KeyCode>>, ui_state: Res<State<UiState>>, mut next_ui_state: ResMut<NextState<UiState>>) {
+pub fn handle_escape_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    ui_state: Res<State<UiState>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
+) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
@@ -368,7 +370,11 @@ pub fn handle_escape_key(keys: Res<ButtonInput<KeyCode>>, ui_state: Res<State<Ui
 }
 
 // drops UiState back to Idle if the unit it references no longer exists
-pub fn prune_stale_selection(ui_state: Res<State<UiState>>, mut next_ui_state: ResMut<NextState<UiState>>, units: Query<(), With<Unit>>) {
+pub fn prune_stale_selection(
+    ui_state: Res<State<UiState>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
+    units: Query<(), With<Unit>>,
+) {
     let referenced = match ui_state.selection() {
         Some(InputSelection::UnitSelected { unit }) => *unit,
         Some(InputSelection::Targeting { unit, .. }) => *unit,
