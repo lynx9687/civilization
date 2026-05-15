@@ -1,6 +1,7 @@
 mod cities;
 mod hexes;
 mod units;
+pub mod theme;
 
 use crate::input::update_hex_highlights;
 use bevy::prelude::*;
