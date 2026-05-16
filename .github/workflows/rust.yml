@@ -109,6 +109,15 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --bin server
 
+      - name: Stop Systemd Service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo systemctl stop civilization
+
       - name: Upload Binary to Oracle VM
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -119,11 +128,11 @@ jobs:
           target: "/home/ubuntu/civilization/"
           strip_components: 2
 
-      - name: Restart Systemd Service
+      - name: Start Systemd Service
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            sudo systemctl restart civilization
+            sudo systemctl start civilization
