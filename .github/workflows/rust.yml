@@ -109,30 +109,38 @@ jobs:
       - name: Build Release Binary
         run: cargo build --release --bin server
 
-      - name: Stop Systemd Service
+      - name: Prepare release directory on server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            sudo systemctl stop civilization
+            mkdir -p /home/ubuntu/civilization/releases/${{ github.sha }}
 
-      - name: Upload Binary to Oracle VM
+      - name: Upload binary and assets
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "target/release/server"
-          target: "/home/ubuntu/civilization/"
+          source: |
+            target/release/server
+            assets
+          target: /home/ubuntu/civilization/releases/${{ github.sha }}/
           strip_components: 2
 
-      - name: Start Systemd Service
+      - name: Activate new release
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            chmod +x /home/ubuntu/civilization/releases/${{ github.sha }}/server
+
+            sudo systemctl stop civilization
+
+            ln -sfn /home/ubuntu/civilization/releases/${{ github.sha }} /home/ubuntu/civilization/current
+
             sudo systemctl start civilization
