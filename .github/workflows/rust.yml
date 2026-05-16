@@ -148,3 +148,7 @@ jobs:
             ln -sfn /home/ubuntu/civilization/releases/${{ github.sha }} /home/ubuntu/civilization/current
 
             sudo systemctl restart civilization
+
+            # Clean up older versions, keeping only the 3 most recent
+            cd /home/ubuntu/civilization/releases
+            ls -1dt */ | tail -n +4 | xargs -r rm -rf --
