@@ -65,7 +65,7 @@ fn main() {
                 handle_disconnects,
                 update_turn_phase,
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
-                // Resolution window: gated as a group so all resolvers see
+                // Resolution window: gated as a group so all resolvers see 
                 // a consistent "turn end" world; advance_turn closes the window.
                 (
                     grow_city_population,
