@@ -145,10 +145,6 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            chmod +x /home/ubuntu/civilization/releases/${{ github.sha }}/server
-
-            sudo systemctl stop civilization
-
             ln -sfn /home/ubuntu/civilization/releases/${{ github.sha }} /home/ubuntu/civilization/current
 
-            sudo systemctl start civilization
+            sudo systemctl restart civilization
