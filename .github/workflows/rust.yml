@@ -118,17 +118,25 @@ jobs:
           script: |
             mkdir -p /home/ubuntu/civilization/releases/${{ github.sha }}
 
-      - name: Upload binary and assets
+      - name: Upload Binary
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: |
-            target/release/server
-            assets
-          target: /home/ubuntu/civilization/releases/${{ github.sha }}/
+          source: "target/release/server"
+          target: "/home/ubuntu/civilization/releases/${{ github.sha }}/"
           strip_components: 2
+
+      - name: Upload Assets
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "assets"
+          target: "/home/ubuntu/civilization/releases/${{ github.sha }}/"
+          strip_components: 0
 
       - name: Activate new release
         uses: appleboy/ssh-action@v1.0.3
