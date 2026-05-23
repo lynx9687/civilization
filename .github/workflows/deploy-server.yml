@@ -1,0 +1,85 @@
+name: Deploy Server
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deploy:
+    name: Build & Deploy Server
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Dependencies
+        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
+
+      - name: Build Release Binary
+        run: cargo build --release --bin server
+
+      - name: Prepare release directory on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }}
+
+      - name: Upload Binary
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "target/release/server"
+          target: "/home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }}/"
+          strip_components: 2
+
+      - name: Upload Assets
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "assets"
+          target: "/home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }}/"
+          strip_components: 0
+
+      - name: Activate new release
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            ln -sfn /home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }} /home/ubuntu/civilization/current
+
+            sudo systemctl restart civilization
+
+            cd /home/ubuntu/civilization/releases
+            ls -1dt */ | tail -n +4 | xargs -r rm -rf --
