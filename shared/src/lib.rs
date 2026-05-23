@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod cities;
 pub mod components;
 pub mod events;

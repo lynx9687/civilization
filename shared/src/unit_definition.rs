@@ -138,11 +138,11 @@ pub fn is_within_attack_range(
     d > 0 && (d as u32) <= attack_range
 }
 
-/// Startup system that loads `UnitRegistry` from `assets/units/` and inserts it as a resource.
+/// Startup system that loads `UnitRegistry` from the runtime assets directory and inserts it as a resource.
 /// Registered by `SharedPlugin` so both server and client get it for free.
 pub fn load_unit_registry(mut commands: Commands) {
-    let path = std::path::Path::new("assets/units");
-    match UnitRegistry::load_from_dir(path) {
+    let path = crate::assets::assets_dir().join("units");
+    match UnitRegistry::load_from_dir(&path) {
         Ok(registry) => {
             println!(
                 "Loaded {} unit definitions from {}",

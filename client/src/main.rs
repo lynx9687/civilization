@@ -16,7 +16,7 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{events::*, plugin::SharedPlugin};
+use shared::{assets::assets_dir, events::*, plugin::SharedPlugin};
 
 use audio::*;
 use camera::*;
@@ -41,11 +41,12 @@ fn main() {
     let addr: SocketAddr = addr_str.parse().expect("Invalid server address");
 
     println!("Connecting to server at {addr}");
+    let asset_path = assets_dir();
 
     App::new()
         .add_plugins((
             DefaultPlugins.set(AssetPlugin {
-                file_path: format!("{}/../assets", env!("CARGO_MANIFEST_DIR")),
+                file_path: asset_path.to_string_lossy().into_owned(),
                 ..default()
             }),
             RepliconPlugins,
