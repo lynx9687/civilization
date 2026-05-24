@@ -42,7 +42,12 @@ pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query
             // No auto-advance; host must send StartGame.
         }
         TurnPhase::WaitingForPlayers => {
-            if count >= 2 {
+            if count == 0 {
+                // All players gone — reset for the next session.
+                state.phase = TurnPhase::Lobby;
+                state.turn_number = 0;
+                println!("All players disconnected, server reset to Lobby");
+            } else if count >= 2 {
                 state.phase = TurnPhase::Accepting;
                 println!(
                     "Enough players ({count}), resuming turn {}",
@@ -51,7 +56,12 @@ pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query
             }
         }
         TurnPhase::Accepting => {
-            if count < 2 {
+            if count == 0 {
+                // Fast-path: both players disconnected in the same frame.
+                state.phase = TurnPhase::Lobby;
+                state.turn_number = 0;
+                println!("All players disconnected, server reset to Lobby");
+            } else if count < 2 {
                 state.phase = TurnPhase::WaitingForPlayers;
                 println!("Not enough players ({count}), waiting...");
             }
@@ -1089,6 +1099,23 @@ mod tests {
             app.world().get::<MoveTo>(second).is_none(),
             "Second friendly's Move to a tile already targeted must be rejected"
         );
+    }
+
+    #[test]
+    fn update_turn_phase_resets_to_lobby_when_all_players_leave() {
+        let mut app = App::new();
+        app.add_systems(Update, update_turn_phase);
+        app.world_mut().spawn(TurnState {
+            phase: TurnPhase::WaitingForPlayers,
+            turn_number: 3,
+        });
+        // No Player entities — simulates all-disconnected state.
+        app.update();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(state.phase, TurnPhase::Lobby, "phase must reset to Lobby");
+        assert_eq!(state.turn_number, 0, "turn_number must reset to 0");
     }
 
     fn lobby_app() -> App {
