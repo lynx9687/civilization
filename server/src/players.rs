@@ -193,8 +193,7 @@ pub fn handle_disconnects(
             if was_host {
                 // Oldest remaining connected player (join_order[0]) becomes host.
                 if let Some(&oldest_client) = player_map.join_order.first()
-                    && let Some(&next_player) =
-                        player_map.client_to_player.get(&oldest_client)
+                    && let Some(&next_player) = player_map.client_to_player.get(&oldest_client)
                 {
                     commands.entity(next_player).insert(Host);
                     println!("Host transferred to {next_player}");
