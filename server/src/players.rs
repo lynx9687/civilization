@@ -41,9 +41,12 @@ fn pick_starting_positions(
 }
 
 /// Maps ConnectedClient entity → Player entity.
+/// `join_order` holds client entities in strict connection order so that
+/// host reassignment always picks the oldest remaining connected player.
 #[derive(Resource, Default)]
 pub struct PlayerMap {
     pub client_to_player: HashMap<Entity, Entity>,
+    pub join_order: Vec<Entity>,
 }
 
 /// Tracks next color index to assign.
@@ -104,6 +107,7 @@ pub fn handle_new_clients(
             .player_map
             .client_to_player
             .insert(client_entity, player_entity);
+        setup.player_map.join_order.push(client_entity);
 
         setup
             .player_state
@@ -154,6 +158,7 @@ pub fn handle_disconnects(
     mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
     mut player_state: ResMut<PlayerState>,
+    mut color_counter: ResMut<ColorCounter>,
     host_check: Query<(), With<Host>>,
 ) {
     for client_entity in disconnected.read() {
@@ -162,19 +167,34 @@ pub fn handle_disconnects(
             player_state.finished_cnt -= 1;
         }
         if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
+            // Keep join_order in sync; do this before the host-reassignment check
+            // so that join_order.first() already reflects the remaining players.
+            player_map.join_order.retain(|&e| e != client_entity);
+
             let was_host = host_check.contains(player_entity);
             commands.entity(player_entity).despawn();
 
             if was_host {
-                // client_to_player already has this client removed, so values() gives remaining players
-                if let Some(&next_player) = player_map.client_to_player.values().next() {
-                    commands.entity(next_player).insert(Host);
-                    println!("Host transferred to {next_player}");
+                // Oldest remaining connected player (join_order[0]) becomes host.
+                if let Some(&oldest_client) = player_map.join_order.first() {
+                    if let Some(&next_player) =
+                        player_map.client_to_player.get(&oldest_client)
+                    {
+                        commands.entity(next_player).insert(Host);
+                        println!("Host transferred to {next_player}");
+                    }
                 }
             }
 
             println!("Player disconnected, despawned {player_entity}");
         }
+    }
+
+    // Reset color counter when the last player leaves so the next session
+    // starts from Player 1 again.
+    if player_map.client_to_player.is_empty() && color_counter.0 != 0 {
+        color_counter.0 = 0;
+        println!("All players gone, color counter reset");
     }
 }
 
@@ -184,6 +204,42 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::StdRng;
     use std::collections::HashSet;
+
+    /// join_order must reflect insertion order and drop removed entries.
+    #[test]
+    fn join_order_tracks_connection_order_and_shrinks_on_remove() {
+        let mut world = bevy::prelude::World::new();
+        let c1 = world.spawn_empty().id();
+        let c2 = world.spawn_empty().id();
+        let c3 = world.spawn_empty().id();
+        let p1 = world.spawn_empty().id();
+        let p2 = world.spawn_empty().id();
+        let p3 = world.spawn_empty().id();
+
+        let mut map = PlayerMap::default();
+        map.client_to_player.insert(c1, p1);
+        map.join_order.push(c1);
+        map.client_to_player.insert(c2, p2);
+        map.join_order.push(c2);
+        map.client_to_player.insert(c3, p3);
+        map.join_order.push(c3);
+
+        // Remove the first (oldest) client — simulates host disconnect.
+        map.client_to_player.remove(&c1);
+        map.join_order.retain(|&e| e != c1);
+
+        // Oldest remaining must be c2 (second to join), not c3.
+        assert_eq!(
+            map.join_order.first().copied(),
+            Some(c2),
+            "oldest remaining client must be c2"
+        );
+        assert_eq!(
+            map.client_to_player.get(map.join_order.first().unwrap()),
+            Some(&p2),
+            "host must transfer to player entity of c2"
+        );
+    }
 
     #[test]
     fn pick_starting_positions_returns_distinct_when_occupied_empty() {
