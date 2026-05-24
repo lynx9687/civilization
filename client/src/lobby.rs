@@ -158,9 +158,10 @@ pub fn update_lobby_ui(
     let i_am_host = host_entity
         .zip(controller.player_entity)
         .is_some_and(|(host, mine)| host == mine);
+    let can_start = i_am_host && players.iter().count() >= 2;
 
     for mut node in &mut start_btn_nodes {
-        node.display = if i_am_host { Display::Flex } else { Display::None };
+        node.display = if can_start { Display::Flex } else { Display::None };
     }
     for mut node in &mut status_nodes {
         node.display = if !i_am_host { Display::Flex } else { Display::None };
