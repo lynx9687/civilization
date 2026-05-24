@@ -140,6 +140,7 @@ pub fn update_lobby_ui(
     existing_rows: Query<(Entity, &LobbyPlayerRow)>,
     mut last_players: Local<Vec<(u8, Entity)>>,
     mut last_host: Local<Option<Entity>>,
+    mut last_me: Local<Option<Entity>>,
 ) {
     let in_lobby = turn_state
         .single()
@@ -173,12 +174,16 @@ pub fn update_lobby_ui(
         .collect();
     sorted_players.sort();
 
-    let needs_rebuild = sorted_players != *last_players || host_entity != *last_host;
+    let my_entity = controller.player_entity;
+    let needs_rebuild = sorted_players != *last_players
+        || host_entity != *last_host
+        || my_entity != *last_me;
     if !needs_rebuild {
         return;
     }
     *last_players = sorted_players.clone();
     *last_host = host_entity;
+    *last_me = my_entity;
 
     let Ok(list_entity) = list_query.single() else {
         return;
@@ -196,15 +201,17 @@ pub fn update_lobby_ui(
             continue;
         };
         let is_host = Some(*player_entity) == host_entity;
+        let is_me = Some(*player_entity) == my_entity;
         let color = PLAYER_COLORS
             .get(*slot as usize)
             .copied()
             .unwrap_or(Color::WHITE);
 
-        let label = if is_host {
-            format!("Player {} [HOST]", slot + 1)
-        } else {
-            format!("Player {}", slot + 1)
+        let label = match (is_host, is_me) {
+            (true, true) => format!("Player {} [HOST] (You)", slot + 1),
+            (true, false) => format!("Player {} [HOST]", slot + 1),
+            (false, true) => format!("Player {} (You)", slot + 1),
+            (false, false) => format!("Player {}", slot + 1),
         };
         let _ = player;
 
