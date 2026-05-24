@@ -175,6 +175,7 @@ pub fn update_turn_ui(
     };
 
     let message = match state.phase {
+        TurnPhase::Lobby => "In lobby — waiting for game to start...".to_string(),
         TurnPhase::WaitingForPlayers => "Waiting for players to join...".to_string(),
         TurnPhase::Accepting => {
             let submitted = last_submitted.0.is_some_and(|t| t >= state.turn_number);

@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::cities::City;
 use shared::events::*;
+use shared::events::StartGame;
 use shared::unit_definition::{UnitRegistry, is_within_move_range};
 use shared::unit_definition::{available_verbs, is_within_attack_range};
 use shared::units::*;
@@ -36,18 +37,65 @@ pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query
         return;
     };
 
-    if count < 2 {
-        if state.phase != TurnPhase::WaitingForPlayers {
-            state.phase = TurnPhase::WaitingForPlayers;
-            println!("Not enough players ({count}), waiting...");
+    match state.phase {
+        TurnPhase::Lobby => {
+            // No auto-advance; host must send StartGame.
         }
-    } else if state.phase == TurnPhase::WaitingForPlayers {
-        state.phase = TurnPhase::Accepting;
-        println!(
-            "Enough players ({count}), accepting moves for turn {}",
-            state.turn_number
-        );
+        TurnPhase::WaitingForPlayers => {
+            if count >= 2 {
+                state.phase = TurnPhase::Accepting;
+                println!(
+                    "Enough players ({count}), resuming turn {}",
+                    state.turn_number
+                );
+            }
+        }
+        TurnPhase::Accepting => {
+            if count < 2 {
+                state.phase = TurnPhase::WaitingForPlayers;
+                println!("Not enough players ({count}), waiting...");
+            }
+        }
     }
+}
+
+pub fn handle_start_game(
+    trigger: On<FromClient<StartGame>>,
+    player_map: Res<PlayerMap>,
+    hosts: Query<(), With<Host>>,
+    players: Query<(), With<Player>>,
+    mut turn_state: Query<&mut TurnState>,
+) {
+    let Ok(mut state) = turn_state.single_mut() else {
+        return;
+    };
+    if state.phase != TurnPhase::Lobby {
+        return;
+    }
+
+    let client_entity = match trigger.client_id {
+        ClientId::Client(e) => e,
+        ClientId::Server => return,
+    };
+    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+
+    if !hosts.contains(player_entity) {
+        println!("Rejected StartGame: sender is not the host");
+        return;
+    }
+    let count = players.iter().count();
+    if count < 2 {
+        println!("Rejected StartGame: need >= 2 players, have {count}");
+        return;
+    }
+
+    state.phase = TurnPhase::Accepting;
+    println!(
+        "Game started by host. Accepting moves for turn {}",
+        state.turn_number
+    );
 }
 
 pub fn handle_finish_turn(
@@ -1040,6 +1088,129 @@ mod tests {
         assert!(
             app.world().get::<MoveTo>(second).is_none(),
             "Second friendly's Move to a tile already targeted must be rejected"
+        );
+    }
+
+    fn lobby_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_start_game);
+        app.update();
+        app
+    }
+
+    #[test]
+    fn handle_start_game_host_with_two_players_transitions_to_accepting() {
+        let mut app = lobby_app();
+
+        let (client, _player) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Lobby,
+                turn_number: 0,
+            });
+            let player1 = world
+                .spawn((Player { color_index: 0, gold: 0 }, Host))
+                .id();
+            let _player2 = world.spawn(Player { color_index: 1, gold: 0 }).id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player1);
+            (client, player1)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: StartGame,
+        });
+        app.world_mut().flush();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Accepting,
+            "host StartGame with 2 players must transition to Accepting"
+        );
+    }
+
+    #[test]
+    fn handle_start_game_rejects_non_host_sender() {
+        let mut app = lobby_app();
+
+        let (non_host_client, _host_player, _non_host_player) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Lobby,
+                turn_number: 0,
+            });
+            let host_player = world
+                .spawn((Player { color_index: 0, gold: 0 }, Host))
+                .id();
+            let non_host_player = world.spawn(Player { color_index: 1, gold: 0 }).id();
+            let non_host_client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(non_host_client, non_host_player);
+            (non_host_client, host_player, non_host_player)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(non_host_client),
+            message: StartGame,
+        });
+        app.world_mut().flush();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Lobby,
+            "non-host StartGame must be rejected; phase must remain Lobby"
+        );
+    }
+
+    #[test]
+    fn handle_start_game_rejects_when_only_one_player() {
+        let mut app = lobby_app();
+
+        let (client, _player) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Lobby,
+                turn_number: 0,
+            });
+            let player = world
+                .spawn((Player { color_index: 0, gold: 0 }, Host))
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            (client, player)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: StartGame,
+        });
+        app.world_mut().flush();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Lobby,
+            "StartGame with only 1 player must be rejected"
         );
     }
 }

@@ -17,6 +17,7 @@ impl Plugin for SharedPlugin {
         app.replicate::<HexPosition>()
             .replicate::<HexTile>()
             .replicate::<Player>()
+            .replicate::<Host>()
             .replicate::<TurnState>()
             .replicate::<Unit>()
             .replicate::<Owner>()
@@ -34,6 +35,7 @@ impl Plugin for SharedPlugin {
             .add_mapped_client_event::<UnitActionEvent>(Channel::Ordered)
             .add_mapped_client_event::<CityActionEvent>(Channel::Ordered)
             .add_client_event::<FinishTurn>(Channel::Ordered)
+            .add_client_event::<StartGame>(Channel::Ordered)
             .add_mapped_server_event::<YourPlayer>(Channel::Ordered)
             .add_systems(Startup, (load_unit_registry, load_recipe_registry).chain());
     }

@@ -56,6 +56,7 @@ fn main() {
         .add_observer(handle_unit_action)
         .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
+        .add_observer(handle_start_game)
         .add_observer(claim_city_tiles)
         .add_observer(complete_unit_production)
         .add_systems(
@@ -127,7 +128,7 @@ fn spawn_grid(mut commands: Commands) {
     }
 
     commands.spawn((TurnState {
-        phase: TurnPhase::WaitingForPlayers,
+        phase: TurnPhase::Lobby,
         turn_number: 0,
     },));
 

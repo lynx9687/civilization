@@ -72,12 +72,15 @@ pub fn handle_new_clients(
     mut color_counter: ResMut<ColorCounter>,
     registry: Res<UnitRegistry>,
     mut setup: NewPlayerSetup,
+    hosts: Query<(), With<Host>>,
 ) {
     // Seed the occupied set from existing units; updated in-line as we
     // assign positions so two clients added in the same frame don't collide
     // (Commands::spawn doesn't materialize until the next system run).
     let mut occupied: HashSet<HexPosition> = existing_units.iter().copied().collect();
     let mut rng = rand::thread_rng();
+    // Prevents two clients joining the same frame from both becoming host.
+    let mut host_assigned_this_frame = false;
 
     for client_entity in &new_clients {
         let color_index = color_counter.next_index();
@@ -90,6 +93,12 @@ pub fn handle_new_clients(
                 HexPosition::new(0, 0),
             ))
             .id();
+
+        if !host_assigned_this_frame && hosts.is_empty() {
+            commands.entity(player_entity).insert(Host);
+            host_assigned_this_frame = true;
+            println!("Player {player_entity} is HOST");
+        }
 
         setup
             .player_map
@@ -145,6 +154,7 @@ pub fn handle_disconnects(
     mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
     mut player_state: ResMut<PlayerState>,
+    host_check: Query<(), With<Host>>,
 ) {
     for client_entity in disconnected.read() {
         let prev_state = player_state.turn.remove(&client_entity);
@@ -152,7 +162,17 @@ pub fn handle_disconnects(
             player_state.finished_cnt -= 1;
         }
         if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
+            let was_host = host_check.contains(player_entity);
             commands.entity(player_entity).despawn();
+
+            if was_host {
+                // client_to_player already has this client removed, so values() gives remaining players
+                if let Some(&next_player) = player_map.client_to_player.values().next() {
+                    commands.entity(next_player).insert(Host);
+                    println!("Host transferred to {next_player}");
+                }
+            }
+
             println!("Player disconnected, despawned {player_entity}");
         }
     }

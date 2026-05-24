@@ -25,9 +25,15 @@ pub struct TurnState {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum TurnPhase {
+    Lobby,
     WaitingForPlayers,
     Accepting,
 }
+
+/// Marker placed on the Player entity of the current host.
+/// Replicated so clients can identify the host without extra events.
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+pub struct Host;
 
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [

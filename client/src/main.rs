@@ -1,6 +1,7 @@
 mod audio;
 mod camera;
 mod input;
+mod lobby;
 mod ui;
 mod visuals;
 
@@ -21,6 +22,7 @@ use shared::{assets::assets_dir, events::*, plugin::SharedPlugin};
 use audio::*;
 use camera::*;
 use input::*;
+use lobby::*;
 use ui::*;
 use visuals::*;
 
@@ -37,7 +39,7 @@ pub struct LocalPlayerColor(pub u8);
 fn main() {
     let addr_str = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "158.180.62.178:5000".to_string());
+        .unwrap_or_else(|| "127.0.0.1:5000".to_string());
     let addr: SocketAddr = addr_str.parse().expect("Invalid server address");
 
     println!("Connecting to server at {addr}");
@@ -66,6 +68,7 @@ fn main() {
                 setup_hex_materials,
                 connect_to_server,
                 spawn_turn_ui,
+                spawn_lobby_ui,
                 play_background_music,
             ),
         )
@@ -73,6 +76,7 @@ fn main() {
         .add_observer(finish_turn_clicked)
         .add_observer(handle_verb_button_click)
         .add_observer(handle_production_button_click)
+        .add_observer(handle_start_game_click)
         .add_systems(
             Update,
             (
@@ -95,6 +99,7 @@ fn main() {
                 update_city_ui,
                 update_action_bar,
                 update_production_bar,
+                update_lobby_ui,
             ),
         )
         .run();
