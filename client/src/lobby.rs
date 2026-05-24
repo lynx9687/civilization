@@ -138,7 +138,7 @@ pub fn update_lobby_ui(
     >,
     list_query: Query<Entity, With<LobbyPlayerList>>,
     existing_rows: Query<(Entity, &LobbyPlayerRow)>,
-    mut last_players: Local<Vec<Entity>>,
+    mut last_players: Local<Vec<(u8, Entity)>>,
     mut last_host: Local<Option<Entity>>,
 ) {
     let in_lobby = turn_state
@@ -166,7 +166,11 @@ pub fn update_lobby_ui(
     }
 
     // Rebuild player list only when its contents change.
-    let mut sorted_players: Vec<Entity> = players.iter().map(|(e, _)| e).collect();
+    // Sort by slot_index so the display order matches the server's compact ordering.
+    let mut sorted_players: Vec<(u8, Entity)> = players
+        .iter()
+        .map(|(e, p)| (p.slot_index, e))
+        .collect();
     sorted_players.sort();
 
     let needs_rebuild = sorted_players != *last_players || host_entity != *last_host;
@@ -187,21 +191,22 @@ pub fn update_lobby_ui(
     let player_map: std::collections::HashMap<Entity, &Player> =
         players.iter().map(|(e, p)| (e, p)).collect();
 
-    for player_entity in &sorted_players {
+    for (slot, player_entity) in &sorted_players {
         let Some(player) = player_map.get(player_entity) else {
             continue;
         };
         let is_host = Some(*player_entity) == host_entity;
         let color = PLAYER_COLORS
-            .get(player.color_index as usize)
+            .get(*slot as usize)
             .copied()
             .unwrap_or(Color::WHITE);
 
         let label = if is_host {
-            format!("Player {} [HOST]", player.color_index + 1)
+            format!("Player {} [HOST]", slot + 1)
         } else {
-            format!("Player {}", player.color_index + 1)
+            format!("Player {}", slot + 1)
         };
+        let _ = player;
 
         let row = commands
             .spawn((

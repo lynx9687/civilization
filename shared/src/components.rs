@@ -6,12 +6,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct HexTile;
 
-/// Player identity — color_index is unique per player, assigned by server.
+/// Player identity — color_index is stable gameplay identity; slot_index is the compact
+/// display slot (0-based, reassigned on disconnect so the lobby list stays contiguous).
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
 #[require(Replicated)]
 pub struct Player {
     pub color_index: u8,
     pub gold: i32,
+    pub slot_index: u8,
 }
 
 /// Replicated turn state — lives on a single entity spawned by the server.

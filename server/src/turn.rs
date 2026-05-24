@@ -406,6 +406,7 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
+                    slot_index: 0,
                 })
                 .id();
 
@@ -529,6 +530,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
+                    slot_index: 0,
             })
             .id();
         let entity = app
@@ -564,6 +566,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
+                    slot_index: 0,
             })
             .id();
         app.world_mut().spawn((City, HexPosition::new(0, 0)));
@@ -604,6 +607,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
+                    slot_index: 0,
             })
             .id();
         app.world_mut().spawn((City, HexPosition::new(0, 0)));
@@ -642,6 +646,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
+                    slot_index: 0,
             })
             .id();
         let first = app
@@ -695,6 +700,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
+                    slot_index: 0,
             })
             .id();
         let entity = app
@@ -781,6 +787,7 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
+                    slot_index: 0,
                 })
                 .id();
             let client = world.spawn_empty().id();
@@ -936,6 +943,7 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
+                    slot_index: 0,
                 })
                 .id();
             let client = world.spawn_empty().id();
@@ -1038,6 +1046,7 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
+                    slot_index: 0,
                 })
                 .id();
             let client = world.spawn_empty().id();
@@ -1142,9 +1151,9 @@ mod tests {
                 turn_number: 0,
             });
             let player1 = world
-                .spawn((Player { color_index: 0, gold: 0 }, Host))
+                .spawn((Player { color_index: 0, gold: 0, slot_index: 0 }, Host))
                 .id();
-            let _player2 = world.spawn(Player { color_index: 1, gold: 0 }).id();
+            let _player2 = world.spawn(Player { color_index: 1, gold: 0, slot_index: 1 }).id();
             let client = world.spawn_empty().id();
             world
                 .resource_mut::<PlayerMap>()
@@ -1179,9 +1188,9 @@ mod tests {
                 turn_number: 0,
             });
             let host_player = world
-                .spawn((Player { color_index: 0, gold: 0 }, Host))
+                .spawn((Player { color_index: 0, gold: 0, slot_index: 0 }, Host))
                 .id();
-            let non_host_player = world.spawn(Player { color_index: 1, gold: 0 }).id();
+            let non_host_player = world.spawn(Player { color_index: 1, gold: 0, slot_index: 1 }).id();
             let non_host_client = world.spawn_empty().id();
             world
                 .resource_mut::<PlayerMap>()
@@ -1216,7 +1225,7 @@ mod tests {
                 turn_number: 0,
             });
             let player = world
-                .spawn((Player { color_index: 0, gold: 0 }, Host))
+                .spawn((Player { color_index: 0, gold: 0, slot_index: 0 }, Host))
                 .id();
             let client = world.spawn_empty().id();
             world

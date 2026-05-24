@@ -4,6 +4,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use rand::seq::SliceRandom;
+use shared::cities::{City, CityOwner};
 use shared::events::*;
 use shared::unit_definition::UnitRegistry;
 use shared::{components::*, hex::HexPosition, units::*};
@@ -87,11 +88,13 @@ pub fn handle_new_clients(
 
     for client_entity in &new_clients {
         let color_index = color_counter.next_index();
+        let slot_index = setup.player_map.join_order.len() as u8;
         let player_entity = commands
             .spawn((
                 Player {
                     color_index,
                     gold: 0,
+                    slot_index,
                 },
                 HexPosition::new(0, 0),
             ))
@@ -140,7 +143,7 @@ pub fn handle_new_clients(
                     Unit { type_id },
                     *pos,
                     Owner(player_entity),
-                    ColorIndex(color_index),
+                    ColorIndex(slot_index),
                     Health::full(definition.hp),
                 ))
                 .id();
@@ -160,6 +163,9 @@ pub fn handle_disconnects(
     mut player_state: ResMut<PlayerState>,
     mut color_counter: ResMut<ColorCounter>,
     host_check: Query<(), With<Host>>,
+    mut players_query: Query<&mut Player>,
+    mut unit_colors: Query<(&Owner, &mut ColorIndex), (With<Unit>, Without<City>)>,
+    mut city_colors: Query<(&CityOwner, &mut ColorIndex), (With<City>, Without<Unit>)>,
 ) {
     for client_entity in disconnected.read() {
         let prev_state = player_state.turn.remove(&client_entity);
@@ -187,6 +193,29 @@ pub fn handle_disconnects(
             }
 
             println!("Player disconnected, despawned {player_entity}");
+        }
+    }
+
+    // Reassign slot indices so the lobby list stays contiguous after any disconnect.
+    // Collect (player_entity → new_slot) first so we can update units/cities in the same pass.
+    let mut slot_map: HashMap<Entity, u8> = HashMap::new();
+    for (slot, &client_entity) in player_map.join_order.iter().enumerate() {
+        if let Some(&player_entity) = player_map.client_to_player.get(&client_entity) {
+            if let Ok(mut player) = players_query.get_mut(player_entity) {
+                player.slot_index = slot as u8;
+                slot_map.insert(player_entity, slot as u8);
+            }
+        }
+    }
+    // Keep ColorIndex in sync so in-game colors match lobby slot colors.
+    for (owner, mut color) in &mut unit_colors {
+        if let Some(&new_slot) = slot_map.get(&owner.0) {
+            color.0 = new_slot;
+        }
+    }
+    for (city_owner, mut color) in &mut city_colors {
+        if let Some(&new_slot) = slot_map.get(&city_owner.entity) {
+            color.0 = new_slot;
         }
     }
 
