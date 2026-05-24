@@ -39,7 +39,7 @@ pub struct LocalPlayerColor(pub u8);
 fn main() {
     let addr_str = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:5000".to_string());
+        .unwrap_or_else(|| "158.180.62.178:5000".to_string());
     let addr: SocketAddr = addr_str.parse().expect("Invalid server address");
 
     println!("Connecting to server at {addr}");
