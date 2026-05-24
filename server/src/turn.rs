@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::cities::City;
-use shared::events::*;
 use shared::events::StartGame;
+use shared::events::*;
 use shared::unit_definition::{UnitRegistry, is_within_move_range};
 use shared::unit_definition::{available_verbs, is_within_attack_range};
 use shared::units::*;
@@ -530,7 +530,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
-                    slot_index: 0,
+                slot_index: 0,
             })
             .id();
         let entity = app
@@ -566,7 +566,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
-                    slot_index: 0,
+                slot_index: 0,
             })
             .id();
         app.world_mut().spawn((City, HexPosition::new(0, 0)));
@@ -607,7 +607,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
-                    slot_index: 0,
+                slot_index: 0,
             })
             .id();
         app.world_mut().spawn((City, HexPosition::new(0, 0)));
@@ -646,7 +646,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
-                    slot_index: 0,
+                slot_index: 0,
             })
             .id();
         let first = app
@@ -700,7 +700,7 @@ mod tests {
             .spawn(Player {
                 color_index: 0,
                 gold: 0,
-                    slot_index: 0,
+                slot_index: 0,
             })
             .id();
         let entity = app
@@ -1151,9 +1151,22 @@ mod tests {
                 turn_number: 0,
             });
             let player1 = world
-                .spawn((Player { color_index: 0, gold: 0, slot_index: 0 }, Host))
+                .spawn((
+                    Player {
+                        color_index: 0,
+                        gold: 0,
+                        slot_index: 0,
+                    },
+                    Host,
+                ))
                 .id();
-            let _player2 = world.spawn(Player { color_index: 1, gold: 0, slot_index: 1 }).id();
+            let _player2 = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
             let client = world.spawn_empty().id();
             world
                 .resource_mut::<PlayerMap>()
@@ -1188,9 +1201,22 @@ mod tests {
                 turn_number: 0,
             });
             let host_player = world
-                .spawn((Player { color_index: 0, gold: 0, slot_index: 0 }, Host))
+                .spawn((
+                    Player {
+                        color_index: 0,
+                        gold: 0,
+                        slot_index: 0,
+                    },
+                    Host,
+                ))
                 .id();
-            let non_host_player = world.spawn(Player { color_index: 1, gold: 0, slot_index: 1 }).id();
+            let non_host_player = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
             let non_host_client = world.spawn_empty().id();
             world
                 .resource_mut::<PlayerMap>()
@@ -1225,7 +1251,14 @@ mod tests {
                 turn_number: 0,
             });
             let player = world
-                .spawn((Player { color_index: 0, gold: 0, slot_index: 0 }, Host))
+                .spawn((
+                    Player {
+                        color_index: 0,
+                        gold: 0,
+                        slot_index: 0,
+                    },
+                    Host,
+                ))
                 .id();
             let client = world.spawn_empty().id();
             world

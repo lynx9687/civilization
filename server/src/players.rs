@@ -68,6 +68,18 @@ pub struct NewPlayerSetup<'w> {
     player_state: ResMut<'w, PlayerState>,
 }
 
+type UnitColorFilter = (With<Unit>, Without<City>);
+type CityColorFilter = (With<City>, Without<Unit>);
+
+/// Bundles the three slot-reindex params so `handle_disconnects` stays under the
+/// argument-count limit without losing any query capabilities.
+#[derive(SystemParam)]
+pub(crate) struct SlotSync<'w, 's> {
+    players: Query<'w, 's, &'static mut Player>,
+    units: Query<'w, 's, (&'static Owner, &'static mut ColorIndex), UnitColorFilter>,
+    cities: Query<'w, 's, (&'static CityOwner, &'static mut ColorIndex), CityColorFilter>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_new_clients(
     new_clients: Query<Entity, Added<AuthorizedClient>>,
@@ -163,9 +175,7 @@ pub fn handle_disconnects(
     mut player_state: ResMut<PlayerState>,
     mut color_counter: ResMut<ColorCounter>,
     host_check: Query<(), With<Host>>,
-    mut players_query: Query<&mut Player>,
-    mut unit_colors: Query<(&Owner, &mut ColorIndex), (With<Unit>, Without<City>)>,
-    mut city_colors: Query<(&CityOwner, &mut ColorIndex), (With<City>, Without<Unit>)>,
+    mut sync: SlotSync,
 ) {
     for client_entity in disconnected.read() {
         let prev_state = player_state.turn.remove(&client_entity);
@@ -182,13 +192,12 @@ pub fn handle_disconnects(
 
             if was_host {
                 // Oldest remaining connected player (join_order[0]) becomes host.
-                if let Some(&oldest_client) = player_map.join_order.first() {
-                    if let Some(&next_player) =
+                if let Some(&oldest_client) = player_map.join_order.first()
+                    && let Some(&next_player) =
                         player_map.client_to_player.get(&oldest_client)
-                    {
-                        commands.entity(next_player).insert(Host);
-                        println!("Host transferred to {next_player}");
-                    }
+                {
+                    commands.entity(next_player).insert(Host);
+                    println!("Host transferred to {next_player}");
                 }
             }
 
@@ -200,20 +209,20 @@ pub fn handle_disconnects(
     // Collect (player_entity → new_slot) first so we can update units/cities in the same pass.
     let mut slot_map: HashMap<Entity, u8> = HashMap::new();
     for (slot, &client_entity) in player_map.join_order.iter().enumerate() {
-        if let Some(&player_entity) = player_map.client_to_player.get(&client_entity) {
-            if let Ok(mut player) = players_query.get_mut(player_entity) {
-                player.slot_index = slot as u8;
-                slot_map.insert(player_entity, slot as u8);
-            }
+        if let Some(&player_entity) = player_map.client_to_player.get(&client_entity)
+            && let Ok(mut player) = sync.players.get_mut(player_entity)
+        {
+            player.slot_index = slot as u8;
+            slot_map.insert(player_entity, slot as u8);
         }
     }
     // Keep ColorIndex in sync so in-game colors match lobby slot colors.
-    for (owner, mut color) in &mut unit_colors {
+    for (owner, mut color) in &mut sync.units {
         if let Some(&new_slot) = slot_map.get(&owner.0) {
             color.0 = new_slot;
         }
     }
-    for (city_owner, mut color) in &mut city_colors {
+    for (city_owner, mut color) in &mut sync.cities {
         if let Some(&new_slot) = slot_map.get(&city_owner.entity) {
             color.0 = new_slot;
         }

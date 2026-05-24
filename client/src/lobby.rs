@@ -1,9 +1,22 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
-use shared::components::{Host, Player, TurnPhase, TurnState, PLAYER_COLORS};
+use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState};
 use shared::events::StartGame;
 
 use crate::input::Controller;
+
+type StartBtnFilter = (
+    With<StartGameButton>,
+    Without<LobbyOverlay>,
+    Without<LobbyStatusText>,
+    Without<LobbyPlayerList>,
+);
+type StatusNodeFilter = (
+    With<LobbyStatusText>,
+    Without<LobbyOverlay>,
+    Without<StartGameButton>,
+    Without<LobbyPlayerList>,
+);
 
 #[derive(Component)]
 pub struct LobbyOverlay;
@@ -118,24 +131,8 @@ pub fn update_lobby_ui(
     hosts: Query<Entity, With<Host>>,
     controller: Res<Controller>,
     mut overlay_nodes: Query<&mut Node, With<LobbyOverlay>>,
-    mut start_btn_nodes: Query<
-        &mut Node,
-        (
-            With<StartGameButton>,
-            Without<LobbyOverlay>,
-            Without<LobbyStatusText>,
-            Without<LobbyPlayerList>,
-        ),
-    >,
-    mut status_nodes: Query<
-        &mut Node,
-        (
-            With<LobbyStatusText>,
-            Without<LobbyOverlay>,
-            Without<StartGameButton>,
-            Without<LobbyPlayerList>,
-        ),
-    >,
+    mut start_btn_nodes: Query<&mut Node, StartBtnFilter>,
+    mut status_nodes: Query<&mut Node, StatusNodeFilter>,
     list_query: Query<Entity, With<LobbyPlayerList>>,
     existing_rows: Query<(Entity, &LobbyPlayerRow)>,
     mut last_players: Local<Vec<(u8, Entity)>>,
@@ -148,7 +145,11 @@ pub fn update_lobby_ui(
         .unwrap_or(true); // stay visible while TurnState hasn't arrived yet
 
     for mut node in &mut overlay_nodes {
-        node.display = if in_lobby { Display::Flex } else { Display::None };
+        node.display = if in_lobby {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
     if !in_lobby {
         return;
@@ -161,24 +162,29 @@ pub fn update_lobby_ui(
     let can_start = i_am_host && players.iter().count() >= 2;
 
     for mut node in &mut start_btn_nodes {
-        node.display = if can_start { Display::Flex } else { Display::None };
+        node.display = if can_start {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
     for mut node in &mut status_nodes {
-        node.display = if !i_am_host { Display::Flex } else { Display::None };
+        node.display = if !i_am_host {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
 
     // Rebuild player list only when its contents change.
     // Sort by slot_index so the display order matches the server's compact ordering.
-    let mut sorted_players: Vec<(u8, Entity)> = players
-        .iter()
-        .map(|(e, p)| (p.slot_index, e))
-        .collect();
+    let mut sorted_players: Vec<(u8, Entity)> =
+        players.iter().map(|(e, p)| (p.slot_index, e)).collect();
     sorted_players.sort();
 
     let my_entity = controller.player_entity;
-    let needs_rebuild = sorted_players != *last_players
-        || host_entity != *last_host
-        || my_entity != *last_me;
+    let needs_rebuild =
+        sorted_players != *last_players || host_entity != *last_host || my_entity != *last_me;
     if !needs_rebuild {
         return;
     }
@@ -194,8 +200,7 @@ pub fn update_lobby_ui(
         commands.entity(row_entity).despawn();
     }
 
-    let player_map: std::collections::HashMap<Entity, &Player> =
-        players.iter().map(|(e, p)| (e, p)).collect();
+    let player_map: std::collections::HashMap<Entity, &Player> = players.iter().collect();
 
     for (slot, player_entity) in &sorted_players {
         let Some(player) = player_map.get(player_entity) else {
