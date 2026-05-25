@@ -104,7 +104,13 @@ pub fn handle_new_clients(
         // Normal lobby join: full player setup.
         let color_index = setup.player_map.join_order.len() as u8;
         let player_entity = commands
-            .spawn((Player { color_index, gold: 0 }, HexPosition::new(0, 0)))
+            .spawn((
+                Player {
+                    color_index,
+                    gold: 0,
+                },
+                HexPosition::new(0, 0),
+            ))
             .id();
 
         if !host_assigned_this_frame && hosts.is_empty() {
@@ -198,7 +204,10 @@ pub fn promote_waiting_players(
         commands
             .entity(player_entity)
             .remove::<WaitingPlayer>()
-            .insert(Player { color_index, gold: 0 });
+            .insert(Player {
+                color_index,
+                gold: 0,
+            });
 
         player_state
             .turn
@@ -230,9 +239,7 @@ pub fn promote_waiting_players(
             );
         }
 
-        println!(
-            "Promoted WaitingPlayer {player_entity} to Player (color_index {color_index})"
-        );
+        println!("Promoted WaitingPlayer {player_entity} to Player (color_index {color_index})");
     }
 }
 

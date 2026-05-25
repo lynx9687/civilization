@@ -21,7 +21,7 @@ use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 use cities::*;
 use cities_systems::*;
 use combat::{cleanup_dead_units, resolve_movement, resolve_ranged_attacks};
-use players::{handle_disconnects, handle_new_clients, promote_waiting_players, PlayerMap};
+use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
 use turn::*;
 
 const PROTOCOL_ID: u64 = 0;
