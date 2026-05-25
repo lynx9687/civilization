@@ -36,12 +36,11 @@ impl UnitAction {
     }
 }
 
-/// Server-to-client event: tells a client which player is theirs.
+/// Server-to-client event: tells a client which player entity is theirs.
 #[derive(Event, Serialize, Deserialize, MapEntities, Clone, Debug)]
 pub struct YourPlayer {
     #[entities]
     pub player_entity: Entity,
-    pub color_index: u8,
 }
 
 /// Client-to-server event: player finished his turn

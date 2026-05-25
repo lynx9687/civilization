@@ -50,7 +50,6 @@ fn main() {
         ))
         .insert_resource(BindAddr(addr))
         .init_resource::<PlayerMap>()
-        .init_resource::<ColorCounter>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_unit_action)

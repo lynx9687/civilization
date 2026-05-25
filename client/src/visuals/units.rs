@@ -49,7 +49,6 @@ pub(crate) struct HealthBarText;
 
 type UnitSpriteRootFilter = (With<UnitSpriteRoot>, Without<Unit>);
 type HealthBarFillFilter = (With<HealthBarFill>, Without<Unit>);
-type ChangedColorFilter = (With<Unit>, Changed<ColorIndex>);
 
 pub fn spawn_unit_visuals(
     units: Query<(Entity, &Unit, &ColorIndex, &HexPosition), Added<Unit>>,
@@ -248,8 +247,9 @@ fn unit_sprite(image: Handle<Image>, color: Color) -> Sprite {
 /// Repaints team-mask sprites whenever the server replicates a new `ColorIndex`
 /// (e.g. after lobby slot reindexing).  `spawn_unit_visuals` only runs once for
 /// `Added<Unit>`, so without this system colors would be frozen at join time.
+#[allow(clippy::type_complexity)]
 pub fn update_unit_colors(
-    units: Query<(&ColorIndex, &UnitVisual), ChangedColorFilter>,
+    units: Query<(&ColorIndex, &UnitVisual), (With<Unit>, Changed<ColorIndex>)>,
     mut masks: Query<&mut Sprite, With<UnitTeamMask>>,
 ) {
     for (color_index, visual) in &units {

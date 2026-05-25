@@ -5,19 +5,6 @@ use shared::events::StartGame;
 
 use crate::input::Controller;
 
-type StartBtnFilter = (
-    With<StartGameButton>,
-    Without<LobbyOverlay>,
-    Without<LobbyStatusText>,
-    Without<LobbyPlayerList>,
-);
-type StatusNodeFilter = (
-    With<LobbyStatusText>,
-    Without<LobbyOverlay>,
-    Without<StartGameButton>,
-    Without<LobbyPlayerList>,
-);
-
 #[derive(Component)]
 pub struct LobbyOverlay;
 
@@ -30,9 +17,9 @@ pub struct LobbyStatusText;
 #[derive(Component)]
 pub struct LobbyPlayerList;
 
-/// Identifies which Player entity a lobby row was built for.
+/// Marker for lobby player rows; despawn all on rebuild.
 #[derive(Component)]
-pub struct LobbyPlayerRow(#[allow(dead_code)] pub Entity);
+pub struct LobbyPlayerRow;
 
 pub fn spawn_lobby_ui(mut commands: Commands) {
     commands
@@ -124,6 +111,7 @@ pub fn spawn_lobby_ui(mut commands: Commands) {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn update_lobby_ui(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
@@ -131,10 +119,26 @@ pub fn update_lobby_ui(
     hosts: Query<Entity, With<Host>>,
     controller: Res<Controller>,
     mut overlay_nodes: Query<&mut Node, With<LobbyOverlay>>,
-    mut start_btn_nodes: Query<&mut Node, StartBtnFilter>,
-    mut status_nodes: Query<&mut Node, StatusNodeFilter>,
+    mut start_btn_nodes: Query<
+        &mut Node,
+        (
+            With<StartGameButton>,
+            Without<LobbyOverlay>,
+            Without<LobbyStatusText>,
+            Without<LobbyPlayerList>,
+        ),
+    >,
+    mut status_nodes: Query<
+        &mut Node,
+        (
+            With<LobbyStatusText>,
+            Without<LobbyOverlay>,
+            Without<StartGameButton>,
+            Without<LobbyPlayerList>,
+        ),
+    >,
     list_query: Query<Entity, With<LobbyPlayerList>>,
-    existing_rows: Query<(Entity, &LobbyPlayerRow)>,
+    existing_rows: Query<Entity, With<LobbyPlayerRow>>,
     mut last_players: Local<Vec<(u8, Entity)>>,
     mut last_host: Local<Option<Entity>>,
     mut last_me: Local<Option<Entity>>,
@@ -179,7 +183,7 @@ pub fn update_lobby_ui(
     // Rebuild player list only when its contents change.
     // Sort by slot_index so the display order matches the server's compact ordering.
     let mut sorted_players: Vec<(u8, Entity)> =
-        players.iter().map(|(e, p)| (p.slot_index, e)).collect();
+        players.iter().map(|(e, p)| (p.color_index, e)).collect();
     sorted_players.sort();
 
     let my_entity = controller.player_entity;
@@ -196,7 +200,7 @@ pub fn update_lobby_ui(
         return;
     };
 
-    for (row_entity, _) in &existing_rows {
+    for row_entity in &existing_rows {
         commands.entity(row_entity).despawn();
     }
 
@@ -223,7 +227,7 @@ pub fn update_lobby_ui(
 
         let row = commands
             .spawn((
-                LobbyPlayerRow(*player_entity),
+                LobbyPlayerRow,
                 Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,

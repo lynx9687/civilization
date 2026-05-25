@@ -203,7 +203,6 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             world
@@ -257,14 +256,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let p2 = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let a = world
@@ -353,14 +350,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let p2 = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let attacker = world
@@ -427,14 +422,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let p2 = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let attacker = world
@@ -545,7 +538,6 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             world
