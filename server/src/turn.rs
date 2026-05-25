@@ -72,12 +72,21 @@ pub fn update_turn_phase(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn handle_start_game(
     trigger: On<FromClient<StartGame>>,
     player_map: Res<PlayerMap>,
     hosts: Query<(), With<Host>>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: Query<
+        (),
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+        ),
+    >,
     defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
     let Ok(mut state) = turn_state.single_mut() else {
@@ -103,6 +112,10 @@ pub fn handle_start_game(
         println!("Rejected StartGame: sender is defeated");
         return;
     }
+    if victorious.contains(player_entity) {
+        println!("Rejected StartGame: sender is victorious");
+        return;
+    }
     let count = players.iter().count();
     if count < 2 {
         println!("Rejected StartGame: need >= 2 players, have {count}");
@@ -121,6 +134,7 @@ pub fn handle_finish_turn(
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
     players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let client_entity = match trigger.client_id {
         ClientId::Client(entity) => entity,
@@ -131,6 +145,9 @@ pub fn handle_finish_turn(
         return;
     };
     if !players.contains(player_entity) {
+        return;
+    }
+    if victorious.contains(player_entity) {
         return;
     }
     let prev_state = player_state
@@ -167,6 +184,7 @@ pub fn handle_unit_action(
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
     defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     // common-path validation
     let Ok(state) = turn_state.single() else {
@@ -184,6 +202,9 @@ pub fn handle_unit_action(
         return;
     };
     if defeated.contains(*player_entity) {
+        return;
+    }
+    if victorious.contains(*player_entity) {
         return;
     }
 
@@ -338,8 +359,16 @@ pub fn resolve_builds(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn eliminate_defeated_players(
-    players: Query<Entity, (With<Player>, Without<DefeatedPlayer>)>,
+    players: Query<
+        Entity,
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+        ),
+    >,
     cities: Query<&CityOwner, With<City>>,
     units: Query<(Entity, &Owner, &Unit)>,
     registry: Res<UnitRegistry>,
@@ -347,6 +376,8 @@ pub fn eliminate_defeated_players(
     mut player_state: ResMut<PlayerState>,
     mut commands: Commands,
 ) {
+    let mut survivors = Vec::new();
+
     for player_entity in &players {
         let controls_city = cities.iter().any(|owner| owner.entity == player_entity);
         let has_settler = units.iter().any(|(_, owner, unit)| {
@@ -356,6 +387,7 @@ pub fn eliminate_defeated_players(
                     .is_some_and(|def| def.build_targets.iter().any(|target| target == "city"))
         });
         if controls_city || has_settler {
+            survivors.push(player_entity);
             continue;
         }
 
@@ -370,6 +402,25 @@ pub fn eliminate_defeated_players(
 
         for (&client_entity, &mapped_player) in &player_map.client_to_player {
             if mapped_player != player_entity {
+                continue;
+            }
+            if player_state
+                .turn
+                .remove(&client_entity)
+                .is_some_and(|state| state == PlayerTurnState::Finished)
+            {
+                player_state.finished_cnt -= 1;
+            }
+        }
+    }
+
+    if survivors.len() == 1 {
+        let winner = survivors[0];
+        println!("Player {winner} won: last surviving player");
+        commands.entity(winner).insert(VictoriousPlayer);
+
+        for (&client_entity, &mapped_player) in &player_map.client_to_player {
+            if mapped_player != winner {
                 continue;
             }
             if player_state
@@ -1384,6 +1435,83 @@ mod tests {
 
         assert!(app.world().get::<DefeatedPlayer>(settler_player).is_none());
         assert!(app.world().get::<DefeatedPlayer>(city_player).is_none());
+        assert!(
+            app.world()
+                .get::<VictoriousPlayer>(settler_player)
+                .is_none()
+        );
+        assert!(app.world().get::<VictoriousPlayer>(city_player).is_none());
+    }
+
+    #[test]
+    fn eliminate_defeated_players_marks_last_survivor_victorious() {
+        let mut app = App::new();
+        app.add_systems(Update, eliminate_defeated_players);
+
+        let warrior_type = UnitTypeId(0);
+        let mut registry = UnitRegistry::default();
+        registry.definitions.insert(
+            warrior_type,
+            UnitDefinition {
+                hp: 10,
+                move_budget: 2,
+                attack_range: 1,
+                attack_damage: 4,
+                gold_upkeep: 1,
+                production_cost: 20,
+                build_targets: vec![],
+                terrain_cost: HashMap::new(),
+            },
+        );
+        app.insert_resource(registry);
+        app.init_resource::<PlayerMap>();
+        app.init_resource::<PlayerState>();
+
+        let (winner, loser, winner_client) = {
+            let world = app.world_mut();
+            let winner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let loser = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let winner_client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(winner_client, winner);
+            world
+                .resource_mut::<PlayerState>()
+                .turn
+                .insert(winner_client, PlayerTurnState::Finished);
+            world.resource_mut::<PlayerState>().finished_cnt = 1;
+            world.spawn((City, CityOwner { entity: winner }));
+            world.spawn((
+                Unit {
+                    type_id: warrior_type,
+                },
+                Owner(loser),
+            ));
+            (winner, loser, winner_client)
+        };
+
+        app.update();
+
+        assert!(app.world().get::<VictoriousPlayer>(winner).is_some());
+        assert!(app.world().get::<DefeatedPlayer>(loser).is_some());
+        assert!(
+            !app.world()
+                .resource::<PlayerState>()
+                .turn
+                .contains_key(&winner_client)
+        );
+        assert_eq!(app.world().resource::<PlayerState>().finished_cnt, 0);
     }
 
     #[test]

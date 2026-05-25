@@ -48,6 +48,11 @@ pub struct WaitingPlayer;
 #[derive(Component, Serialize, Deserialize, Clone, Debug)]
 pub struct DefeatedPlayer;
 
+/// Marker placed on the last surviving player in a completed game.
+/// Replicated so their client can switch to a victory screen and stop interaction.
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+pub struct VictoriousPlayer;
+
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [
     Color::srgb(0.9, 0.2, 0.2), // red

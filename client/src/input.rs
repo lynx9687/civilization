@@ -38,6 +38,23 @@ pub fn local_player_defeated(
         .is_some_and(|player| defeated.contains(player))
 }
 
+pub fn local_player_victorious(
+    controller: &Controller,
+    victorious: &Query<(), With<VictoriousPlayer>>,
+) -> bool {
+    controller
+        .player_entity
+        .is_some_and(|player| victorious.contains(player))
+}
+
+pub fn local_player_game_over(
+    controller: &Controller,
+    defeated: &Query<(), With<DefeatedPlayer>>,
+    victorious: &Query<(), With<VictoriousPlayer>>,
+) -> bool {
+    local_player_defeated(controller, defeated) || local_player_victorious(controller, victorious)
+}
+
 /// Selection / targeting state. Drives the action bar visibility and
 /// the map-highlight overlay. Idle = no unit selected.
 #[derive(Resource, Default)]
@@ -97,16 +114,17 @@ pub fn update_hex_highlights(
     all_tiles: Query<&HexPosition, With<HexTile>>,
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     players: Query<&Player>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
     let player_entity = controller.player_entity;
-    let is_defeated = local_player_defeated(&controller, &defeated);
+    let is_game_over = local_player_game_over(&controller, &defeated, &victorious);
 
     // compute the current overlay set based on UiState
-    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = if is_defeated {
+    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = if is_game_over {
         (Vec::new(), Vec::new())
     } else {
         match *ui_state {
@@ -199,6 +217,7 @@ pub fn handle_left_click(
     cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
     defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -219,7 +238,7 @@ pub fn handle_left_click(
     let Some(player_entity) = controller.player_entity else {
         return;
     };
-    if local_player_defeated(&controller, &defeated) {
+    if local_player_game_over(&controller, &defeated, &victorious) {
         *ui_state = UiState::Idle;
         controller.selected_city = None;
         return;
@@ -317,6 +336,7 @@ pub fn handle_right_click(
     mut ui_state: ResMut<UiState>,
     cities: Query<(Entity, &HexPosition), With<City>>,
     defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
@@ -330,7 +350,7 @@ pub fn handle_right_click(
     if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
         return;
     }
-    if local_player_defeated(&controller, &defeated) {
+    if local_player_game_over(&controller, &defeated, &victorious) {
         *ui_state = UiState::Idle;
         controller.selected_city = None;
         return;
