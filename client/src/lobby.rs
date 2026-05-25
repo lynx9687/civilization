@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
-use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState};
+use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState, WaitingPlayer};
 use shared::events::StartGame;
 
 use crate::input::Controller;
@@ -118,6 +118,7 @@ pub fn update_lobby_ui(
     players: Query<(Entity, &Player)>,
     hosts: Query<Entity, With<Host>>,
     controller: Res<Controller>,
+    waiting_players: Query<(), With<WaitingPlayer>>,
     mut overlay_nodes: Query<&mut Node, With<LobbyOverlay>>,
     mut start_btn_nodes: Query<
         &mut Node,
@@ -137,6 +138,7 @@ pub fn update_lobby_ui(
             Without<LobbyPlayerList>,
         ),
     >,
+    mut status_text: Query<&mut Text, With<LobbyStatusText>>,
     list_query: Query<Entity, With<LobbyPlayerList>>,
     existing_rows: Query<Entity, With<LobbyPlayerRow>>,
     mut last_players: Local<Vec<(u8, Entity)>>,
@@ -148,15 +150,45 @@ pub fn update_lobby_ui(
         .map(|s| s.phase == TurnPhase::Lobby)
         .unwrap_or(true); // stay visible while TurnState hasn't arrived yet
 
+    // A late-joining client has WaitingPlayer on their entity; they must see the
+    // overlay even while the game is in progress for everyone else.
+    let is_waiting = controller
+        .player_entity
+        .is_some_and(|e| waiting_players.contains(e));
+
     for mut node in &mut overlay_nodes {
-        node.display = if in_lobby {
+        node.display = if in_lobby || is_waiting {
             Display::Flex
         } else {
             Display::None
         };
     }
-    if !in_lobby {
+    if !in_lobby && !is_waiting {
         return;
+    }
+
+    // Waiting-room path: show "game in progress" message, hide everything else.
+    if is_waiting {
+        for mut node in &mut start_btn_nodes {
+            node.display = Display::None;
+        }
+        for mut node in &mut status_nodes {
+            node.display = Display::Flex;
+        }
+        if let Ok(mut text) = status_text.single_mut() {
+            **text = "A game is in progress. You will join the next one.".to_string();
+        }
+        for row_entity in &existing_rows {
+            commands.entity(row_entity).despawn();
+        }
+        *last_players = vec![];
+        *last_host = None;
+        return;
+    }
+
+    // Normal lobby path below.
+    if let Ok(mut text) = status_text.single_mut() {
+        **text = "Waiting for host to start the game...".to_string();
     }
 
     let host_entity = hosts.single().ok();

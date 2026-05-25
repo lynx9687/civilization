@@ -36,6 +36,13 @@ pub enum TurnPhase {
 #[derive(Component, Serialize, Deserialize, Clone, Debug)]
 pub struct Host;
 
+/// Marker spawned on a client's entity when they connect during an active game.
+/// They wait in the lobby until the current game ends, then get promoted to Player.
+/// Replicated so the client can detect its own waiting state.
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+#[require(Replicated)]
+pub struct WaitingPlayer;
+
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [
     Color::srgb(0.9, 0.2, 0.2), // red

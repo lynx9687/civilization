@@ -63,25 +63,48 @@ pub fn handle_new_clients(
     registry: Res<UnitRegistry>,
     mut setup: NewPlayerSetup,
     hosts: Query<(), With<Host>>,
+    turn_state: Query<&TurnState>,
 ) {
-    // Seed the occupied set from existing units; updated in-line as we
-    // assign positions so two clients added in the same frame don't collide
-    // (Commands::spawn doesn't materialize until the next system run).
+    let is_lobby = turn_state
+        .single()
+        .map(|s| s.phase == TurnPhase::Lobby)
+        .unwrap_or(true); // treat unknown state as lobby (startup race)
+
+    // Seed occupied positions only for lobby joins that need unit placement.
     let mut occupied: HashSet<HexPosition> = existing_units.iter().copied().collect();
     let mut rng = rand::thread_rng();
-    // Prevents two clients joining the same frame from both becoming host.
+    // Prevents two clients joining in the same frame from both becoming host.
     let mut host_assigned_this_frame = false;
 
     for client_entity in &new_clients {
+        if !is_lobby {
+            // Game in progress: place client in a waiting room.
+            // They get a minimal WaitingPlayer entity — no units, no turn slot.
+            // promote_waiting_players will upgrade them when the game ends.
+            let waiting_entity = commands.spawn(WaitingPlayer).id();
+
+            setup
+                .player_map
+                .client_to_player
+                .insert(client_entity, waiting_entity);
+            setup.player_map.join_order.push(client_entity);
+
+            let client_id = ClientId::Client(client_entity);
+            commands.server_trigger(ToClients {
+                mode: SendMode::Direct(client_id),
+                message: YourPlayer {
+                    player_entity: waiting_entity,
+                },
+            });
+
+            println!("Client joined during active game (waiting room), entity: {waiting_entity}");
+            continue;
+        }
+
+        // Normal lobby join: full player setup.
         let color_index = setup.player_map.join_order.len() as u8;
         let player_entity = commands
-            .spawn((
-                Player {
-                    color_index,
-                    gold: 0,
-                },
-                HexPosition::new(0, 0),
-            ))
+            .spawn((Player { color_index, gold: 0 }, HexPosition::new(0, 0)))
             .id();
 
         if !host_assigned_this_frame && hosts.is_empty() {
@@ -99,7 +122,7 @@ pub fn handle_new_clients(
         setup
             .player_state
             .turn
-            .insert(client_entity, crate::turn::PlayerTurnState::InProgress);
+            .insert(client_entity, PlayerTurnState::InProgress);
 
         let client_id = ClientId::Client(client_entity);
         commands.server_trigger(ToClients {
@@ -134,6 +157,82 @@ pub fn handle_new_clients(
                 pos.q, pos.r, definition.hp
             );
         }
+    }
+}
+
+/// Promotes WaitingPlayer entities to full Player entities (with units) when the
+/// game ends and the phase resets to Lobby.  Runs every frame but is a no-op
+/// unless there are waiting players AND the phase is Lobby.
+#[allow(clippy::too_many_arguments)]
+pub fn promote_waiting_players(
+    turn_state: Query<&TurnState>,
+    waiting: Query<Entity, With<WaitingPlayer>>,
+    player_map: Res<PlayerMap>,
+    mut player_state: ResMut<PlayerState>,
+    mut commands: Commands,
+    registry: Res<UnitRegistry>,
+    existing_units: Query<&HexPosition, With<Unit>>,
+) {
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Lobby {
+        return;
+    }
+    if waiting.is_empty() {
+        return;
+    }
+
+    let mut occupied: HashSet<HexPosition> = existing_units.iter().copied().collect();
+    let mut rng = rand::thread_rng();
+
+    for (idx, &client_entity) in player_map.join_order.iter().enumerate() {
+        let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+            continue;
+        };
+        if !waiting.contains(player_entity) {
+            continue;
+        }
+
+        let color_index = idx as u8;
+        commands
+            .entity(player_entity)
+            .remove::<WaitingPlayer>()
+            .insert(Player { color_index, gold: 0 });
+
+        player_state
+            .turn
+            .insert(client_entity, PlayerTurnState::InProgress);
+
+        let starting_units = ["warrior", "archer", "settler", "knight", "cavalry"];
+        let positions = pick_starting_positions(&occupied, starting_units.len(), &mut rng);
+
+        for (unit_type, pos) in starting_units.iter().zip(positions.iter()) {
+            let type_id = registry
+                .id_of(unit_type)
+                .unwrap_or_else(|| panic!("missing unit definition for {unit_type}"));
+            let definition = registry
+                .get(&type_id)
+                .unwrap_or_else(|| panic!("registry has id but no definition for {unit_type}"));
+            let unit_entity = commands
+                .spawn((
+                    Unit { type_id },
+                    *pos,
+                    Owner(player_entity),
+                    ColorIndex(color_index),
+                    Health::full(definition.hp),
+                ))
+                .id();
+            occupied.insert(*pos);
+            println!(
+                "Spawned {unit_type}: {unit_entity} at ({}, {}) (HP {}) for promoted player: {player_entity}",
+                pos.q, pos.r, definition.hp
+            );
+        }
+
+        println!(
+            "Promoted WaitingPlayer {player_entity} to Player (color_index {color_index})"
+        );
     }
 }
 

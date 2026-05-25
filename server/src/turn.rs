@@ -111,11 +111,20 @@ pub fn handle_start_game(
 pub fn handle_finish_turn(
     trigger: On<FromClient<FinishTurn>>,
     mut player_state: ResMut<PlayerState>,
+    player_map: Res<PlayerMap>,
+    players: Query<(), With<Player>>,
 ) {
     let client_entity = match trigger.client_id {
         ClientId::Client(entity) => entity,
         ClientId::Server => return,
     };
+    // Ignore FinishTurn from waiting-room clients (not active game participants).
+    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+    if !players.contains(player_entity) {
+        return;
+    }
     let prev_state = player_state
         .turn
         .insert(client_entity, PlayerTurnState::Finished);
