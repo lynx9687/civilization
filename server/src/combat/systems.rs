@@ -6,7 +6,7 @@ use shared::unit_definition::UnitRegistry;
 use shared::units::{AttackTarget, ColorIndex, Health, MoveTo, Owner, Unit};
 use std::collections::HashMap;
 
-use crate::cities::CITY_CAPTURE_HP;
+use crate::cities::{CITY_CAPTURE_HP, CityAttackedThisTurn};
 
 use super::algorithm::resolve_movement_pure;
 use super::types::{CitySnapshot, ResolveAction, UnitSnapshot};
@@ -59,6 +59,7 @@ pub fn resolve_ranged_attacks(
             if let Ok(mut h) = hp_q.get_mut(city_entity) {
                 let before = h.current;
                 h.current = h.current.saturating_sub(def.attack_damage);
+                commands.entity(city_entity).insert(CityAttackedThisTurn);
                 println!(
                     "Ranged: {attacker_entity} hit city {city_entity} at {:?} for {} dmg (hp {} -> {})",
                     attack_target.pos, def.attack_damage, before, h.current
@@ -171,6 +172,7 @@ pub fn resolve_movement(
                 h.current, new_hp, delta
             );
             h.current = new_hp as u32;
+            commands.entity(*e).insert(CityAttackedThisTurn);
         }
     }
 

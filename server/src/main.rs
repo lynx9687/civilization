@@ -74,6 +74,7 @@ fn main() {
                     resolve_ranged_attacks,
                     resolve_movement,
                     cleanup_dead_units,
+                    regenerate_unattacked_cities,
                     resolve_fortify,
                     resolve_skip,
                     resolve_builds,
