@@ -27,7 +27,7 @@ Keep in mind that the game should be designed using Bevy's ECS system. For high-
 ## Coding guidelines
 - Format code with `cargo fmt`
 - Run the most relevant `cargo check` or `cargo test` command when feasible. If a command cannot be run, explain why.
-- Ensure code quality by running `cargo clippy`. Try to fix the underlying problem rather than supressing the warning. 
+- Ensure code quality by running `cargo clippy`. Try to fix the underlying problem rather than suppressing the warning. The nature of Bevy's query system makes `too_many_arguments` and `type_complexity` very common. Silencing in those situations is fine if having inlined types makes the code more readable than creating ad hoc types or SystemParams for given system just to silence the warning. 
 - Think about proper code organization. Components and systems should be separated based on their purpose, such as combat, visuals, networking, movement, turns, map generation, or input. Avoid throwing all components into one file.
 - Create new files if necessary
 - Use Rust `///` comments to describe public components, resources, events, and non-obvious systems
