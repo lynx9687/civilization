@@ -1046,7 +1046,6 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let client = world.spawn_empty().id();
@@ -1142,14 +1141,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let enemy = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             let client = world.spawn_empty().id();

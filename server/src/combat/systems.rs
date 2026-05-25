@@ -569,14 +569,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let defender = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             let attacker = world
@@ -643,14 +641,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let defender_owner = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             world.spawn((
@@ -728,14 +724,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let defender_owner = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             world.spawn((
@@ -803,14 +797,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let defender_owner = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             world.spawn((
@@ -878,14 +870,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let defender_owner = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             let attacker = world
@@ -961,14 +951,12 @@ mod tests {
                 .spawn(Player {
                     color_index: 0,
                     gold: 0,
-                    slot_index: 0,
                 })
                 .id();
             let defender_owner = world
                 .spawn(Player {
                     color_index: 1,
                     gold: 0,
-                    slot_index: 1,
                 })
                 .id();
             world.spawn((

@@ -213,7 +213,7 @@ pub fn update_lobby_ui(
     }
 
     // Rebuild player list only when its contents change.
-    // Sort by slot_index so the display order matches the server's compact ordering.
+    // Sort by color_index so the display order matches the server's compact ordering.
     let mut sorted_players: Vec<(u8, Entity)> =
         players.iter().map(|(e, p)| (p.color_index, e)).collect();
     sorted_players.sort();
