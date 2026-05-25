@@ -1,9 +1,12 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
-use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState, WaitingPlayer};
+use shared::components::{
+    DefeatedPlayer, Host, PLAYER_COLORS, Player, TurnPhase, TurnState, WaitingPlayer,
+};
 use shared::events::StartGame;
 
 use crate::input::Controller;
+use crate::input::local_player_defeated;
 
 #[derive(Component)]
 pub struct LobbyOverlay;
@@ -300,8 +303,13 @@ pub fn handle_start_game_click(
     buttons: Query<(), With<StartGameButton>>,
     turn_state: Query<&TurnState>,
     players: Query<(), With<Player>>,
+    controller: Res<Controller>,
+    defeated: Query<(), With<DefeatedPlayer>>,
 ) {
     if !buttons.contains(click.entity) {
+        return;
+    }
+    if local_player_defeated(&controller, &defeated) {
         return;
     }
     let Ok(state) = turn_state.single() else {

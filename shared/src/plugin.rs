@@ -19,6 +19,7 @@ impl Plugin for SharedPlugin {
             .replicate::<Player>()
             .replicate::<Host>()
             .replicate::<WaitingPlayer>()
+            .replicate::<DefeatedPlayer>()
             .replicate::<TurnState>()
             .replicate::<Unit>()
             .replicate::<Owner>()

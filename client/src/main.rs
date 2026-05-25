@@ -103,6 +103,7 @@ fn main() {
                     update_action_bar,
                     update_production_bar,
                     update_lobby_ui,
+                    update_lose_screen,
                 ),
             ),
         )

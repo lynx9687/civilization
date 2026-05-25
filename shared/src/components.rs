@@ -43,6 +43,11 @@ pub struct Host;
 #[require(Replicated)]
 pub struct WaitingPlayer;
 
+/// Marker placed on players who have been eliminated from the current game.
+/// Replicated so their client can switch to a loss screen and stop interaction.
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+pub struct DefeatedPlayer;
+
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [
     Color::srgb(0.9, 0.2, 0.2), // red

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientId, FromClient};
 use shared::{
     cities::*,
-    components::{HexTile, Player, TurnPhase, TurnState},
+    components::{DefeatedPlayer, HexTile, Player, TurnPhase, TurnState},
     events::{CityAction, CityActionEvent},
     hex::HexPosition,
     production::{CityProduction, ProductionOutput, RecipeRegistry},
@@ -68,6 +68,7 @@ pub fn handle_city_action(
     recipes: Res<RecipeRegistry>,
     turn_state: Query<&TurnState>,
     mut cities: Query<(&CityOwner, &mut CityProduction), With<City>>,
+    defeated: Query<(), With<DefeatedPlayer>>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -83,6 +84,9 @@ pub fn handle_city_action(
     let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
+    if defeated.contains(*player_entity) {
+        return;
+    }
 
     let Ok((owner, mut production)) = cities.get_mut(trigger.message.city) else {
         return;

@@ -77,6 +77,7 @@ fn main() {
                     resolve_fortify,
                     resolve_skip,
                     resolve_builds,
+                    eliminate_defeated_players,
                     advance_city_production,
                     advance_turn,
                 )
