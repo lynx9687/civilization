@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::cities::City;
+use shared::cities::{City, CityOwner};
 use shared::events::StartGame;
 use shared::events::*;
 use shared::unit_definition::{UnitRegistry, is_within_move_range};
@@ -145,6 +145,7 @@ pub fn handle_unit_action(
     player_map: Res<PlayerMap>,
     units: Query<(&HexPosition, &Owner, &Unit)>,
     enemy_units: Query<(&HexPosition, &Owner), With<Unit>>,
+    cities: Query<(&HexPosition, &CityOwner), With<City>>,
     queued_moves: Query<(Entity, &MoveTo, &Owner), With<Unit>>, // for same-turn collision detection
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
@@ -204,6 +205,13 @@ pub fn handle_unit_action(
                 println!("Rejected move: friendly already on tile");
                 return;
             }
+            if let Some((_, city_owner)) = cities.iter().find(|(p, _)| *p == target)
+                && city_owner.entity != *player_entity
+                && def.attack_range != 1
+            {
+                println!("Rejected move: only melee units can attack cities by moving");
+                return;
+            }
             // Reject if another friendly already queued a Move to the same tile this turn.
             // Skip the issuing unit's own marker — re-submitting the same target on the
             // same unit must succeed (it's a no-op replace handled by queue_marker).
@@ -224,7 +232,10 @@ pub fn handle_unit_action(
             }
             let enemy_here = enemy_units
                 .iter()
-                .any(|(p, o)| p == target && o.0 != *player_entity);
+                .any(|(p, o)| p == target && o.0 != *player_entity)
+                || cities
+                    .iter()
+                    .any(|(p, owner)| p == target && owner.entity != *player_entity);
             if !enemy_here {
                 println!("Rejected attack: no enemy at target");
                 return;
@@ -342,7 +353,7 @@ mod tests {
     use bevy::app::ScheduleRunnerPlugin;
     use bevy::state::app::StatesPlugin;
     use bevy_replicon::prelude::*;
-    use shared::cities::City;
+    use shared::cities::{City, CityOwner};
     use shared::components::*;
     use shared::events::*;
     use shared::unit_definition::*;
@@ -992,6 +1003,187 @@ mod tests {
             "Move to friendly-occupied tile must be rejected"
         );
         let _ = (player, blocker);
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_friendly_city_targets() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let archer_type = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_type);
+        registry.definitions.insert(archer_type, archer_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: archer_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            world.spawn((City, HexPosition::new(1, 0), CityOwner { entity: player }));
+            (client, unit)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "moving into a friendly city must be allowed"
+        );
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Attack {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "rejected attack must preserve the queued friendly-city move"
+        );
+        assert!(
+            app.world().get::<AttackTarget>(unit).is_none(),
+            "attacking a friendly city must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_ranged_move_to_enemy_city() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let archer_type = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_type);
+        registry.definitions.insert(archer_type, archer_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let enemy = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: archer_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            world.spawn((City, HexPosition::new(1, 0), CityOwner { entity: enemy }));
+            (client, unit)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+
+        assert!(
+            app.world().get::<MoveTo>(unit).is_none(),
+            "ranged units must not capture cities by moving into them"
+        );
     }
 
     #[test]

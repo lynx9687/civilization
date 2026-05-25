@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::unit_definition::{UnitRegistry, is_within_attack_range, is_within_move_range};
 use shared::{
-    cities::City,
+    cities::{City, CityOwner},
     components::*,
     events::*,
     hex::{HexPosition, pixel_to_hex},
@@ -83,6 +83,7 @@ pub fn update_hex_highlights(
     mut hovered: ResMut<HoveredHex>,
     ui_state: Res<UiState>,
     units: Query<(&Unit, &HexPosition, &Owner)>,
+    cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
     controller: Res<Controller>,
@@ -110,13 +111,21 @@ pub fn update_hex_highlights(
                     let moves = all_tiles
                         .iter()
                         .filter(|t| is_within_move_range(pos, t, def.move_budget))
+                        .filter(|t| {
+                            cities
+                                .iter()
+                                .find(|(city_pos, _)| city_pos == t)
+                                .is_none_or(|(_, city_owner)| {
+                                    city_owner.entity == player_entity || def.attack_range == 1
+                                })
+                        })
                         .copied()
                         .collect();
                     (moves, Vec::new())
                 }
                 TargetableVerb::Attack => {
                     // only enemy-occupied hexes within range light up
-                    let attacks = units
+                    let mut attacks = units
                         .iter()
                         .filter_map(|(_, p, owner)| {
                             let is_enemy = owner.0 != player_entity;
@@ -126,7 +135,15 @@ pub fn update_hex_highlights(
                                 None
                             }
                         })
-                        .collect();
+                        .collect::<Vec<_>>();
+                    attacks.extend(cities.iter().filter_map(|(p, owner)| {
+                        let is_enemy = owner.entity != player_entity;
+                        if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
+                            Some(*p)
+                        } else {
+                            None
+                        }
+                    }));
                     (Vec::new(), attacks)
                 }
             }
@@ -163,6 +180,7 @@ pub fn handle_left_click(
     mut controller: ResMut<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
+    cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
@@ -227,7 +245,11 @@ pub fn handle_left_click(
             };
             match verb {
                 TargetableVerb::Move => {
-                    if is_within_move_range(pos, &target, def.move_budget) {
+                    let city_at_target = cities.iter().find(|(city_pos, _)| **city_pos == target);
+                    let valid_city_target = city_at_target.is_none_or(|(_, city_owner)| {
+                        city_owner.entity == player_entity || def.attack_range == 1
+                    });
+                    if is_within_move_range(pos, &target, def.move_budget) && valid_city_target {
                         commands.client_trigger(UnitActionEvent {
                             unit,
                             action: UnitAction::Move { target },
@@ -242,7 +264,10 @@ pub fn handle_left_click(
                     // attacker is at `pos`; enemies are units with a different owner_id at `target`
                     let enemy_here = units
                         .iter()
-                        .any(|(_, _, owner, p)| *p == target && owner.0 != player_entity);
+                        .any(|(_, _, owner, p)| *p == target && owner.0 != player_entity)
+                        || cities
+                            .iter()
+                            .any(|(p, owner)| *p == target && owner.entity != player_entity);
                     if is_within_attack_range(pos, &target, def.attack_range) && enemy_here {
                         commands.client_trigger(UnitActionEvent {
                             unit,

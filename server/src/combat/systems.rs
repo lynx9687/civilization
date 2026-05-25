@@ -1,11 +1,15 @@
 use bevy::prelude::*;
+use shared::cities::{City, CityOwner};
 use shared::hex::HexPosition;
+use shared::tiles::{OwnedTiles, TileOwner};
 use shared::unit_definition::UnitRegistry;
-use shared::units::{AttackTarget, Health, MoveTo, Owner, Unit};
+use shared::units::{AttackTarget, ColorIndex, Health, MoveTo, Owner, Unit};
 use std::collections::HashMap;
 
+use crate::cities::CITY_CAPTURE_HP;
+
 use super::algorithm::resolve_movement_pure;
-use super::types::{ResolveAction, UnitSnapshot};
+use super::types::{CitySnapshot, ResolveAction, UnitSnapshot};
 
 /// Pre-movement phase: each ranged unit with an AttackTarget hits the live unit
 /// at the target tile (if any) for `attack_damage`, with no counter and no movement.
@@ -13,18 +17,19 @@ use super::types::{ResolveAction, UnitSnapshot};
 /// a missing target here means concentrated-fire killed it earlier in this loop,
 /// or the marker survived a target despawn — either way the attack is wasted.
 pub fn resolve_ranged_attacks(
-    attackers: Query<(Entity, &Unit, &AttackTarget)>,
+    attackers: Query<(Entity, &Unit, &Owner, &AttackTarget)>,
     // Health excluded here to avoid conflicting borrows with hp_q below;
     // liveness is checked via hp_q after we find the candidate by position.
     unit_positions: Query<(Entity, &HexPosition), With<Unit>>,
+    city_positions: Query<(Entity, &HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
     mut hp_q: Query<&mut Health>,
     mut commands: Commands,
 ) {
     let mut acts: Vec<_> = attackers.iter().collect();
-    acts.sort_by_key(|(e, _, _)| *e);
+    acts.sort_by_key(|(e, _, _, _)| *e);
 
-    for (attacker_entity, unit, attack_target) in acts {
+    for (attacker_entity, unit, owner, attack_target) in acts {
         let Some(def) = registry.get(&unit.type_id) else {
             commands.entity(attacker_entity).remove::<AttackTarget>();
             continue;
@@ -38,15 +43,27 @@ pub fn resolve_ranged_attacks(
             })
             .map(|(e, _)| e);
 
-        if let Some(te) = target_entity
-            && let Ok(mut h) = hp_q.get_mut(te)
+        if let Some(target_entity) = target_entity
+            && let Ok(mut h) = hp_q.get_mut(target_entity)
         {
             let before = h.current;
             h.current = h.current.saturating_sub(def.attack_damage);
             println!(
-                "Ranged: {attacker_entity} hit {te} at {:?} for {} dmg (hp {} -> {})",
+                "Ranged: {attacker_entity} hit unit {target_entity} at {:?} for {} dmg (hp {} -> {})",
                 attack_target.pos, def.attack_damage, before, h.current
             );
+        } else if let Some((city_entity, _, _)) = city_positions
+            .iter()
+            .find(|(_, p, city_owner)| **p == attack_target.pos && city_owner.entity != owner.0)
+        {
+            if let Ok(mut h) = hp_q.get_mut(city_entity) {
+                let before = h.current;
+                h.current = h.current.saturating_sub(def.attack_damage);
+                println!(
+                    "Ranged: {attacker_entity} hit city {city_entity} at {:?} for {} dmg (hp {} -> {})",
+                    attack_target.pos, def.attack_damage, before, h.current
+                );
+            }
         } else {
             println!(
                 "Ranged: {attacker_entity} attack at {:?} wasted (no live target)",
@@ -79,8 +96,17 @@ pub fn resolve_movement(
         // p1: mutable HP write-back
         Query<&mut Health>,
         // p2: mutable position write-back
-        Query<&mut HexPosition>,
+        Query<&mut HexPosition, With<Unit>>,
+        // p3: city snapshot query
+        Query<(Entity, &CityOwner, &HexPosition, &Health), With<City>>,
+        // p4: city color write-back
+        Query<&mut ColorIndex, (With<City>, Without<Unit>)>,
+        // p5: unit color lookup for captured city color
+        Query<&ColorIndex, (With<Unit>, Without<City>)>,
+        // p6: city-owned tile relationship lookup
+        Query<&OwnedTiles, With<City>>,
     )>,
+    tile_owners: Query<&TileOwner>,
     registry: Res<UnitRegistry>,
     mut commands: Commands,
 ) {
@@ -107,13 +133,24 @@ pub fn resolve_movement(
             })
         })
         .collect();
+    let city_snapshot: Vec<CitySnapshot> = queries
+        .p3()
+        .iter()
+        .map(|(entity, owner, pos, health)| CitySnapshot {
+            entity,
+            owner: owner.entity,
+            hp: health.current as i32,
+            max_hp: health.max,
+            pos: *pos,
+        })
+        .collect();
 
     // Index for log-time lookup of a unit's pre-resolution state.
     let snap_by_entity: HashMap<Entity, &UnitSnapshot> =
         snapshot.iter().map(|s| (s.entity, s)).collect();
 
     // 2. Run pure algorithm.
-    let deltas = resolve_movement_pure(&snapshot);
+    let deltas = resolve_movement_pure(&snapshot, &city_snapshot, CITY_CAPTURE_HP);
 
     // 3. Apply HP changes via p1.
     for (e, delta) in &deltas.hp_changes {
@@ -124,6 +161,45 @@ pub fn resolve_movement(
                 -delta, h.current, new_hp
             );
             h.current = new_hp as u32;
+        }
+    }
+    for (e, delta) in &deltas.city_hp_changes {
+        if let Ok(mut h) = queries.p1().get_mut(*e) {
+            let new_hp = (h.current as i32 + delta).max(0);
+            println!(
+                "City combat: {e} hp {} -> {} (delta {})",
+                h.current, new_hp, delta
+            );
+            h.current = new_hp as u32;
+        }
+    }
+
+    for capture in &deltas.city_captures {
+        println!(
+            "City captured: {} by player {}",
+            capture.city, capture.new_owner
+        );
+        commands.entity(capture.city).insert(CityOwner {
+            entity: capture.new_owner,
+        });
+
+        if let Ok(unit_color) = queries.p5().get(capture.by_unit) {
+            let new_color = unit_color.0;
+            if let Ok(mut city_color) = queries.p4().get_mut(capture.city) {
+                city_color.0 = new_color;
+            }
+        }
+
+        if let Ok(owned_tiles) = queries.p6().get(capture.city) {
+            for tile_entity in owned_tiles.collection() {
+                let Ok(tile_owner) = tile_owners.get(*tile_entity) else {
+                    continue;
+                };
+                commands.entity(*tile_entity).insert(TileOwner {
+                    city_entity: tile_owner.city_entity,
+                    player_entity: Some(capture.new_owner),
+                });
+            }
         }
     }
 
@@ -471,6 +547,471 @@ mod tests {
         );
         // AttackTarget consumed.
         assert!(app.world().get::<AttackTarget>(attacker).is_none());
+    }
+
+    #[test]
+    fn resolve_ranged_attacks_city_reaches_zero_without_capture() {
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_ranged_attacks);
+
+        let archer_id = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_id);
+        registry.definitions.insert(archer_id, archer_def);
+        app.insert_resource(registry);
+
+        let (attacker, city, defender) = {
+            let world = app.world_mut();
+            let attacker_owner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let defender = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            let attacker = world
+                .spawn((
+                    Unit { type_id: archer_id },
+                    HexPosition::new(0, 0),
+                    Owner(attacker_owner),
+                    Health::full(8),
+                    AttackTarget {
+                        pos: HexPosition::new(2, 0),
+                    },
+                ))
+                .id();
+            let city = world
+                .spawn((
+                    City,
+                    HexPosition::new(2, 0),
+                    CityOwner { entity: defender },
+                    ColorIndex(1),
+                    Health {
+                        current: 3,
+                        max: 20,
+                    },
+                ))
+                .id();
+            (attacker, city, defender)
+        };
+
+        app.update();
+
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 0);
+        assert_eq!(
+            app.world().get::<CityOwner>(city).unwrap().entity,
+            defender,
+            "ranged attacks must not capture cities"
+        );
+        assert!(app.world().get::<AttackTarget>(attacker).is_none());
+    }
+
+    #[test]
+    fn resolve_city_melee_attacks_captures_and_updates_owned_tiles() {
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        let (city, attacker_owner, tile) = {
+            let world = app.world_mut();
+            let attacker_owner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let defender_owner = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            world.spawn((
+                Unit {
+                    type_id: warrior_id,
+                },
+                HexPosition::new(0, 0),
+                Owner(attacker_owner),
+                ColorIndex(0),
+                Health::full(10),
+                MoveTo {
+                    pos: HexPosition::new(1, 0),
+                },
+            ));
+            let city = world
+                .spawn((
+                    City,
+                    HexPosition::new(1, 0),
+                    CityOwner {
+                        entity: defender_owner,
+                    },
+                    ColorIndex(1),
+                    Health {
+                        current: 3,
+                        max: 20,
+                    },
+                ))
+                .id();
+            let tile = world
+                .spawn(TileOwner {
+                    city_entity: city,
+                    player_entity: Some(defender_owner),
+                })
+                .id();
+            (city, attacker_owner, tile)
+        };
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CityOwner>(city).unwrap().entity,
+            attacker_owner
+        );
+        assert_eq!(app.world().get::<ColorIndex>(city).unwrap().0, 0);
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 10);
+        let tile_owner = app.world().get::<TileOwner>(tile).unwrap();
+        assert_eq!(tile_owner.city_entity, city);
+        assert_eq!(tile_owner.player_entity, Some(attacker_owner));
+    }
+
+    #[test]
+    fn resolve_city_melee_attacks_captures_city_already_at_zero() {
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        let (city, attacker_owner) = {
+            let world = app.world_mut();
+            let attacker_owner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let defender_owner = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            world.spawn((
+                Unit {
+                    type_id: warrior_id,
+                },
+                HexPosition::new(0, 0),
+                Owner(attacker_owner),
+                ColorIndex(0),
+                Health::full(10),
+                MoveTo {
+                    pos: HexPosition::new(1, 0),
+                },
+            ));
+            let city = world
+                .spawn((
+                    City,
+                    HexPosition::new(1, 0),
+                    CityOwner {
+                        entity: defender_owner,
+                    },
+                    ColorIndex(1),
+                    Health {
+                        current: 0,
+                        max: 20,
+                    },
+                ))
+                .id();
+            (city, attacker_owner)
+        };
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CityOwner>(city).unwrap().entity,
+            attacker_owner
+        );
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 10);
+    }
+
+    #[test]
+    fn resolve_city_melee_attacks_damages_without_capture_when_hp_remains() {
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        let (city, defender_owner) = {
+            let world = app.world_mut();
+            let attacker_owner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let defender_owner = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            world.spawn((
+                Unit {
+                    type_id: warrior_id,
+                },
+                HexPosition::new(0, 0),
+                Owner(attacker_owner),
+                ColorIndex(0),
+                Health::full(10),
+                MoveTo {
+                    pos: HexPosition::new(1, 0),
+                },
+            ));
+            let city = world
+                .spawn((
+                    City,
+                    HexPosition::new(1, 0),
+                    CityOwner {
+                        entity: defender_owner,
+                    },
+                    ColorIndex(1),
+                    Health {
+                        current: 8,
+                        max: 20,
+                    },
+                ))
+                .id();
+            (city, defender_owner)
+        };
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CityOwner>(city).unwrap().entity,
+            defender_owner
+        );
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 4);
+    }
+
+    #[test]
+    fn resolve_city_melee_attacks_rolls_back_failed_city_entry() {
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        let (attacker, city, defender_owner) = {
+            let world = app.world_mut();
+            let attacker_owner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let defender_owner = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            let attacker = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_id,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(attacker_owner),
+                    ColorIndex(0),
+                    Health::full(10),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+            let city = world
+                .spawn((
+                    City,
+                    HexPosition::new(1, 0),
+                    CityOwner {
+                        entity: defender_owner,
+                    },
+                    ColorIndex(1),
+                    Health {
+                        current: 8,
+                        max: 20,
+                    },
+                ))
+                .id();
+            (attacker, city, defender_owner)
+        };
+
+        app.update();
+
+        assert_eq!(
+            *app.world().get::<HexPosition>(attacker).unwrap(),
+            HexPosition::new(0, 0),
+            "failed city assault should leave attacker outside the city"
+        );
+        assert_eq!(
+            app.world().get::<CityOwner>(city).unwrap().entity,
+            defender_owner
+        );
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 4);
+        assert!(app.world().get::<MoveTo>(attacker).is_none());
+    }
+
+    #[test]
+    fn resolve_city_melee_attacks_ignores_ranged_unit_on_city() {
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let archer_id = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 12,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_id);
+        registry.definitions.insert(archer_id, archer_def);
+        app.insert_resource(registry);
+
+        let (city, defender_owner) = {
+            let world = app.world_mut();
+            let attacker_owner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                    slot_index: 0,
+                })
+                .id();
+            let defender_owner = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                    slot_index: 1,
+                })
+                .id();
+            world.spawn((
+                Unit { type_id: archer_id },
+                HexPosition::new(0, 0),
+                Owner(attacker_owner),
+                ColorIndex(0),
+                Health::full(8),
+                MoveTo {
+                    pos: HexPosition::new(1, 0),
+                },
+            ));
+            let city = world
+                .spawn((
+                    City,
+                    HexPosition::new(1, 0),
+                    CityOwner {
+                        entity: defender_owner,
+                    },
+                    ColorIndex(1),
+                    Health {
+                        current: 5,
+                        max: 20,
+                    },
+                ))
+                .id();
+            (city, defender_owner)
+        };
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<CityOwner>(city).unwrap().entity,
+            defender_owner
+        );
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 5);
     }
 
     #[test]
