@@ -21,7 +21,7 @@ use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
 use cities::*;
 use cities_systems::*;
 use combat::{cleanup_dead_units, resolve_movement, resolve_ranged_attacks};
-use players::*;
+use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
 use turn::*;
 
 const PROTOCOL_ID: u64 = 0;
@@ -50,12 +50,12 @@ fn main() {
         ))
         .insert_resource(BindAddr(addr))
         .init_resource::<PlayerMap>()
-        .init_resource::<ColorCounter>()
         .init_resource::<PlayerState>()
         .add_systems(Startup, (start_server, spawn_grid))
         .add_observer(handle_unit_action)
         .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
+        .add_observer(handle_start_game)
         .add_observer(claim_city_tiles)
         .add_observer(complete_unit_production)
         .add_systems(
@@ -64,6 +64,7 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
+                promote_waiting_players,
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 // Resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
@@ -127,7 +128,7 @@ fn spawn_grid(mut commands: Commands) {
     }
 
     commands.spawn((TurnState {
-        phase: TurnPhase::WaitingForPlayers,
+        phase: TurnPhase::Lobby,
         turn_number: 0,
     },));
 

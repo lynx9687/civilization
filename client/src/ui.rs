@@ -7,7 +7,6 @@ use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, R
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
-use crate::LocalPlayerColor;
 use crate::input::{Controller, LastSubmittedTurn, TargetableVerb, UiState};
 
 #[derive(Component)]
@@ -156,7 +155,7 @@ pub fn finish_turn_clicked(
 
 pub fn update_turn_ui(
     turn_state: Query<&TurnState>,
-    local_color: Option<Res<LocalPlayerColor>>,
+    controller: Res<Controller>,
     last_submitted: Res<LastSubmittedTurn>,
     mut ui_text: Query<&mut Text, With<TurnUiText>>,
 ) {
@@ -164,7 +163,7 @@ pub fn update_turn_ui(
         return;
     };
 
-    if local_color.is_none() {
+    if controller.player_entity.is_none() {
         **text = "Connecting...".to_string();
         return;
     }
@@ -175,6 +174,7 @@ pub fn update_turn_ui(
     };
 
     let message = match state.phase {
+        TurnPhase::Lobby => "In lobby — waiting for game to start...".to_string(),
         TurnPhase::WaitingForPlayers => "Waiting for players to join...".to_string(),
         TurnPhase::Accepting => {
             let submitted = last_submitted.0.is_some_and(|t| t >= state.turn_number);

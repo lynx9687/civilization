@@ -1,6 +1,7 @@
 mod audio;
 mod camera;
 mod input;
+mod lobby;
 mod ui;
 mod visuals;
 
@@ -21,6 +22,7 @@ use shared::{assets::assets_dir, events::*, plugin::SharedPlugin};
 use audio::*;
 use camera::*;
 use input::*;
+use lobby::*;
 use ui::*;
 use visuals::*;
 
@@ -29,10 +31,6 @@ const HEX_SIZE: f32 = 40.0;
 
 #[derive(Resource)]
 struct ServerAddr(SocketAddr);
-
-/// Stores the local player's color index after receiving YourPlayer event.
-#[derive(Resource)]
-pub struct LocalPlayerColor(pub u8);
 
 fn main() {
     let addr_str = std::env::args()
@@ -66,6 +64,7 @@ fn main() {
                 setup_hex_materials,
                 connect_to_server,
                 spawn_turn_ui,
+                spawn_lobby_ui,
                 play_background_music,
             ),
         )
@@ -73,28 +72,37 @@ fn main() {
         .add_observer(finish_turn_clicked)
         .add_observer(handle_verb_button_click)
         .add_observer(handle_production_button_click)
+        .add_observer(handle_start_game_click)
         .add_systems(
             Update,
             (
-                spawn_hex_visuals,
-                spawn_unit_visuals,
-                spawn_city_visuals,
-                update_city_visuals,
-                update_unit_positions,
-                update_unit_health_bars,
-                move_camera_with_keyboard,
-                zoom_camera_with_scroll,
-                update_hex_highlights,
-                handle_left_click,
-                handle_right_click,
-                handle_escape_key,
-                prune_stale_selection,
-                reset_submission_on_new_turn,
-                populate_production_bar,
-                update_turn_ui,
-                update_city_ui,
-                update_action_bar,
-                update_production_bar,
+                (
+                    spawn_hex_visuals,
+                    spawn_unit_visuals,
+                    update_unit_colors,
+                    spawn_city_visuals,
+                    update_city_visuals,
+                    update_unit_positions,
+                    update_unit_health_bars,
+                ),
+                (
+                    move_camera_with_keyboard,
+                    zoom_camera_with_scroll,
+                    update_hex_highlights,
+                    handle_left_click,
+                    handle_right_click,
+                    handle_escape_key,
+                    prune_stale_selection,
+                ),
+                (
+                    reset_submission_on_new_turn,
+                    populate_production_bar,
+                    update_turn_ui,
+                    update_city_ui,
+                    update_action_bar,
+                    update_production_bar,
+                    update_lobby_ui,
+                ),
             ),
         )
         .run();
@@ -132,15 +140,7 @@ fn connect_to_server(
     Ok(())
 }
 
-fn on_your_player(
-    trigger: On<YourPlayer>,
-    mut commands: Commands,
-    mut controller: ResMut<Controller>,
-) {
-    let color_index = trigger.color_index;
-    commands.insert_resource(LocalPlayerColor(color_index));
-    println!("Assigned player color index: {color_index}");
-    let player_entity = trigger.player_entity;
-    println!("Received player_entity: {player_entity}");
-    controller.player_entity = Some(player_entity);
+fn on_your_player(trigger: On<YourPlayer>, mut controller: ResMut<Controller>) {
+    controller.player_entity = Some(trigger.player_entity);
+    println!("Received player_entity: {}", trigger.player_entity);
 }
