@@ -1,22 +1,9 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
-use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState};
+use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState, WaitingPlayer};
 use shared::events::StartGame;
 
 use crate::input::Controller;
-
-type StartBtnFilter = (
-    With<StartGameButton>,
-    Without<LobbyOverlay>,
-    Without<LobbyStatusText>,
-    Without<LobbyPlayerList>,
-);
-type StatusNodeFilter = (
-    With<LobbyStatusText>,
-    Without<LobbyOverlay>,
-    Without<StartGameButton>,
-    Without<LobbyPlayerList>,
-);
 
 #[derive(Component)]
 pub struct LobbyOverlay;
@@ -30,9 +17,9 @@ pub struct LobbyStatusText;
 #[derive(Component)]
 pub struct LobbyPlayerList;
 
-/// Identifies which Player entity a lobby row was built for.
+/// Marker for lobby player rows; despawn all on rebuild.
 #[derive(Component)]
-pub struct LobbyPlayerRow(#[allow(dead_code)] pub Entity);
+pub struct LobbyPlayerRow;
 
 pub fn spawn_lobby_ui(mut commands: Commands) {
     commands
@@ -124,17 +111,36 @@ pub fn spawn_lobby_ui(mut commands: Commands) {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn update_lobby_ui(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
     players: Query<(Entity, &Player)>,
     hosts: Query<Entity, With<Host>>,
     controller: Res<Controller>,
+    waiting_players: Query<(), With<WaitingPlayer>>,
     mut overlay_nodes: Query<&mut Node, With<LobbyOverlay>>,
-    mut start_btn_nodes: Query<&mut Node, StartBtnFilter>,
-    mut status_nodes: Query<&mut Node, StatusNodeFilter>,
+    mut start_btn_nodes: Query<
+        &mut Node,
+        (
+            With<StartGameButton>,
+            Without<LobbyOverlay>,
+            Without<LobbyStatusText>,
+            Without<LobbyPlayerList>,
+        ),
+    >,
+    mut status_nodes: Query<
+        &mut Node,
+        (
+            With<LobbyStatusText>,
+            Without<LobbyOverlay>,
+            Without<StartGameButton>,
+            Without<LobbyPlayerList>,
+        ),
+    >,
+    mut status_text: Query<&mut Text, With<LobbyStatusText>>,
     list_query: Query<Entity, With<LobbyPlayerList>>,
-    existing_rows: Query<(Entity, &LobbyPlayerRow)>,
+    existing_rows: Query<Entity, With<LobbyPlayerRow>>,
     mut last_players: Local<Vec<(u8, Entity)>>,
     mut last_host: Local<Option<Entity>>,
     mut last_me: Local<Option<Entity>>,
@@ -144,15 +150,45 @@ pub fn update_lobby_ui(
         .map(|s| s.phase == TurnPhase::Lobby)
         .unwrap_or(true); // stay visible while TurnState hasn't arrived yet
 
+    // A late-joining client has WaitingPlayer on their entity; they must see the
+    // overlay even while the game is in progress for everyone else.
+    let is_waiting = controller
+        .player_entity
+        .is_some_and(|e| waiting_players.contains(e));
+
     for mut node in &mut overlay_nodes {
-        node.display = if in_lobby {
+        node.display = if in_lobby || is_waiting {
             Display::Flex
         } else {
             Display::None
         };
     }
-    if !in_lobby {
+    if !in_lobby && !is_waiting {
         return;
+    }
+
+    // Waiting-room path: show "game in progress" message, hide everything else.
+    if is_waiting {
+        for mut node in &mut start_btn_nodes {
+            node.display = Display::None;
+        }
+        for mut node in &mut status_nodes {
+            node.display = Display::Flex;
+        }
+        if let Ok(mut text) = status_text.single_mut() {
+            **text = "A game is in progress. You will join the next one.".to_string();
+        }
+        for row_entity in &existing_rows {
+            commands.entity(row_entity).despawn();
+        }
+        *last_players = vec![];
+        *last_host = None;
+        return;
+    }
+
+    // Normal lobby path below.
+    if let Ok(mut text) = status_text.single_mut() {
+        **text = "Waiting for host to start the game...".to_string();
     }
 
     let host_entity = hosts.single().ok();
@@ -179,7 +215,7 @@ pub fn update_lobby_ui(
     // Rebuild player list only when its contents change.
     // Sort by slot_index so the display order matches the server's compact ordering.
     let mut sorted_players: Vec<(u8, Entity)> =
-        players.iter().map(|(e, p)| (p.slot_index, e)).collect();
+        players.iter().map(|(e, p)| (p.color_index, e)).collect();
     sorted_players.sort();
 
     let my_entity = controller.player_entity;
@@ -196,7 +232,7 @@ pub fn update_lobby_ui(
         return;
     };
 
-    for (row_entity, _) in &existing_rows {
+    for row_entity in &existing_rows {
         commands.entity(row_entity).despawn();
     }
 
@@ -223,7 +259,7 @@ pub fn update_lobby_ui(
 
         let row = commands
             .spawn((
-                LobbyPlayerRow(*player_entity),
+                LobbyPlayerRow,
                 Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,

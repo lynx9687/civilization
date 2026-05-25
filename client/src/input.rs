@@ -163,7 +163,7 @@ pub fn update_hex_highlights(
                 continue;
             };
             *material =
-                MeshMaterial2d(hex_materials.claimed[owning_player.slot_index as usize].clone());
+                MeshMaterial2d(hex_materials.claimed[owning_player.color_index as usize].clone());
         } else {
             *material = MeshMaterial2d(hex_materials.default.clone());
         }

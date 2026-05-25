@@ -18,6 +18,7 @@ impl Plugin for SharedPlugin {
             .replicate::<HexTile>()
             .replicate::<Player>()
             .replicate::<Host>()
+            .replicate::<WaitingPlayer>()
             .replicate::<TurnState>()
             .replicate::<Unit>()
             .replicate::<Owner>()

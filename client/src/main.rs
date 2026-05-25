@@ -32,10 +32,6 @@ const HEX_SIZE: f32 = 40.0;
 #[derive(Resource)]
 struct ServerAddr(SocketAddr);
 
-/// Stores the local player's color index after receiving YourPlayer event.
-#[derive(Resource)]
-pub struct LocalPlayerColor(pub u8);
-
 fn main() {
     let addr_str = std::env::args()
         .nth(1)
@@ -144,15 +140,7 @@ fn connect_to_server(
     Ok(())
 }
 
-fn on_your_player(
-    trigger: On<YourPlayer>,
-    mut commands: Commands,
-    mut controller: ResMut<Controller>,
-) {
-    let color_index = trigger.color_index;
-    commands.insert_resource(LocalPlayerColor(color_index));
-    println!("Assigned player color index: {color_index}");
-    let player_entity = trigger.player_entity;
-    println!("Received player_entity: {player_entity}");
-    controller.player_entity = Some(player_entity);
+fn on_your_player(trigger: On<YourPlayer>, mut controller: ResMut<Controller>) {
+    controller.player_entity = Some(trigger.player_entity);
+    println!("Received player_entity: {}", trigger.player_entity);
 }

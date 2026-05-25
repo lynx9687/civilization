@@ -6,14 +6,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct HexTile;
 
-/// Player identity — color_index is stable gameplay identity; slot_index is the compact
-/// display slot (0-based, reassigned on disconnect so the lobby list stays contiguous).
+/// Player identity — color_index is the display slot (0-based), reassigned on
+/// disconnect so the lobby list stays contiguous.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug)]
 #[require(Replicated)]
 pub struct Player {
     pub color_index: u8,
     pub gold: i32,
-    pub slot_index: u8,
 }
 
 /// Replicated turn state — lives on a single entity spawned by the server.
@@ -36,6 +35,13 @@ pub enum TurnPhase {
 /// Replicated so clients can identify the host without extra events.
 #[derive(Component, Serialize, Deserialize, Clone, Debug)]
 pub struct Host;
+
+/// Marker spawned on a client's entity when they connect during an active game.
+/// They wait in the lobby until the current game ends, then get promoted to Player.
+/// Replicated so the client can detect its own waiting state.
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+#[require(Replicated)]
+pub struct WaitingPlayer;
 
 /// Player colors for rendering. Index by Player::color_index.
 pub const PLAYER_COLORS: [Color; 8] = [
