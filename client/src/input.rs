@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use shared::unit_definition::{UnitRegistry, is_within_attack_range, is_within_move_range};
 use shared::{
-    cities::City,
+    cities::{City, CityOwner},
     components::*,
     events::*,
     hex::{HexPosition, pixel_to_hex},
@@ -27,6 +27,32 @@ pub struct HoveredHex(Option<HexPosition>);
 pub struct Controller {
     pub player_entity: Option<Entity>,
     pub selected_city: Option<Entity>,
+}
+
+pub fn local_player_defeated(
+    controller: &Controller,
+    defeated: &Query<(), With<DefeatedPlayer>>,
+) -> bool {
+    controller
+        .player_entity
+        .is_some_and(|player| defeated.contains(player))
+}
+
+pub fn local_player_victorious(
+    controller: &Controller,
+    victorious: &Query<(), With<VictoriousPlayer>>,
+) -> bool {
+    controller
+        .player_entity
+        .is_some_and(|player| victorious.contains(player))
+}
+
+pub fn local_player_game_over(
+    controller: &Controller,
+    defeated: &Query<(), With<DefeatedPlayer>>,
+    victorious: &Query<(), With<VictoriousPlayer>>,
+) -> bool {
+    local_player_defeated(controller, defeated) || local_player_victorious(controller, victorious)
 }
 
 /// Selection / targeting state. Drives the action bar visibility and
@@ -83,55 +109,80 @@ pub fn update_hex_highlights(
     mut hovered: ResMut<HoveredHex>,
     ui_state: Res<UiState>,
     units: Query<(&Unit, &HexPosition, &Owner)>,
+    cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
     controller: Res<Controller>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     players: Query<&Player>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
-    let Some(player_entity) = controller.player_entity else {
-        return;
-    };
+    let player_entity = controller.player_entity;
+    let is_game_over = local_player_game_over(&controller, &defeated, &victorious);
 
     // compute the current overlay set based on UiState
-    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = match *ui_state {
-        UiState::Targeting { unit, verb } => 'overlay: {
-            let Ok((u, pos, _)) = units.get(unit) else {
-                // stale unit ref — fall through with no overlay so the loop repaints to default
-                break 'overlay (Vec::new(), Vec::new());
-            };
-            let Some(def) = registry.get(&u.type_id) else {
-                break 'overlay (Vec::new(), Vec::new());
-            };
-            match verb {
-                TargetableVerb::Move => {
-                    let moves = all_tiles
-                        .iter()
-                        .filter(|t| is_within_move_range(pos, t, def.move_budget))
-                        .copied()
-                        .collect();
-                    (moves, Vec::new())
-                }
-                TargetableVerb::Attack => {
-                    // only enemy-occupied hexes within range light up
-                    let attacks = units
-                        .iter()
-                        .filter_map(|(_, p, owner)| {
-                            let is_enemy = owner.0 != player_entity;
+    let (move_targets, attack_targets): (Vec<HexPosition>, Vec<HexPosition>) = if is_game_over {
+        (Vec::new(), Vec::new())
+    } else {
+        match *ui_state {
+            UiState::Targeting { unit, verb } => 'overlay: {
+                let Some(player_entity) = player_entity else {
+                    break 'overlay (Vec::new(), Vec::new());
+                };
+                let Ok((u, pos, _)) = units.get(unit) else {
+                    // stale unit ref — fall through with no overlay so the loop repaints to default
+                    break 'overlay (Vec::new(), Vec::new());
+                };
+                let Some(def) = registry.get(&u.type_id) else {
+                    break 'overlay (Vec::new(), Vec::new());
+                };
+                match verb {
+                    TargetableVerb::Move => {
+                        let moves = all_tiles
+                            .iter()
+                            .filter(|t| is_within_move_range(pos, t, def.move_budget))
+                            .filter(|t| {
+                                cities
+                                    .iter()
+                                    .find(|(city_pos, _)| city_pos == t)
+                                    .is_none_or(|(_, city_owner)| {
+                                        city_owner.entity == player_entity || def.attack_range == 1
+                                    })
+                            })
+                            .copied()
+                            .collect();
+                        (moves, Vec::new())
+                    }
+                    TargetableVerb::Attack => {
+                        // only enemy-occupied hexes within range light up
+                        let mut attacks = units
+                            .iter()
+                            .filter_map(|(_, p, owner)| {
+                                let is_enemy = owner.0 != player_entity;
+                                if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
+                                    Some(*p)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        attacks.extend(cities.iter().filter_map(|(p, owner)| {
+                            let is_enemy = owner.entity != player_entity;
                             if is_enemy && is_within_attack_range(pos, p, def.attack_range) {
                                 Some(*p)
                             } else {
                                 None
                             }
-                        })
-                        .collect();
-                    (Vec::new(), attacks)
+                        }));
+                        (Vec::new(), attacks)
+                    }
                 }
             }
+            _ => (Vec::new(), Vec::new()),
         }
-        _ => (Vec::new(), Vec::new()),
     };
 
     for (pos, owner, mut material) in &mut tiles {
@@ -163,7 +214,10 @@ pub fn handle_left_click(
     mut controller: ResMut<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
+    cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -184,6 +238,11 @@ pub fn handle_left_click(
     let Some(player_entity) = controller.player_entity else {
         return;
     };
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        *ui_state = UiState::Idle;
+        controller.selected_city = None;
+        return;
+    }
 
     // is the click on one of my owned units?
     let owned_unit_at = |hex: HexPosition| -> Option<Entity> {
@@ -227,7 +286,11 @@ pub fn handle_left_click(
             };
             match verb {
                 TargetableVerb::Move => {
-                    if is_within_move_range(pos, &target, def.move_budget) {
+                    let city_at_target = cities.iter().find(|(city_pos, _)| **city_pos == target);
+                    let valid_city_target = city_at_target.is_none_or(|(_, city_owner)| {
+                        city_owner.entity == player_entity || def.attack_range == 1
+                    });
+                    if is_within_move_range(pos, &target, def.move_budget) && valid_city_target {
                         commands.client_trigger(UnitActionEvent {
                             unit,
                             action: UnitAction::Move { target },
@@ -242,7 +305,10 @@ pub fn handle_left_click(
                     // attacker is at `pos`; enemies are units with a different owner_id at `target`
                     let enemy_here = units
                         .iter()
-                        .any(|(_, _, owner, p)| *p == target && owner.0 != player_entity);
+                        .any(|(_, _, owner, p)| *p == target && owner.0 != player_entity)
+                        || cities
+                            .iter()
+                            .any(|(p, owner)| *p == target && owner.entity != player_entity);
                     if is_within_attack_range(pos, &target, def.attack_range) && enemy_here {
                         commands.client_trigger(UnitActionEvent {
                             unit,
@@ -260,6 +326,7 @@ pub fn handle_left_click(
 
 /// Allows selecting both unit/city when they are on the same tile. This is a temporary solution
 /// Better handling of user input / gui should be considered in the future
+#[allow(clippy::too_many_arguments)]
 pub fn handle_right_click(
     mouse: Res<ButtonInput<MouseButton>>,
     cursor: CursorWorld,
@@ -268,6 +335,8 @@ pub fn handle_right_click(
     mut controller: ResMut<Controller>,
     mut ui_state: ResMut<UiState>,
     cities: Query<(Entity, &HexPosition), With<City>>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
@@ -279,6 +348,11 @@ pub fn handle_right_click(
         return;
     }
     if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        return;
+    }
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        *ui_state = UiState::Idle;
+        controller.selected_city = None;
         return;
     }
 

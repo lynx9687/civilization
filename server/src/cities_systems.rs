@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::{ClientId, FromClient};
 use shared::{
     cities::*,
-    components::{HexTile, Player, TurnPhase, TurnState},
+    components::{DefeatedPlayer, HexTile, Player, TurnPhase, TurnState, VictoriousPlayer},
     events::{CityAction, CityActionEvent},
     hex::HexPosition,
     production::{CityProduction, ProductionOutput, RecipeRegistry},
@@ -62,12 +62,38 @@ pub fn grant_city_gold(
     }
 }
 
+pub fn regenerate_unattacked_cities(
+    mut commands: Commands,
+    mut cities: Query<(Entity, &mut Health, Option<&CityAttackedThisTurn>), With<City>>,
+) {
+    for (entity, mut health, attacked) in &mut cities {
+        if attacked.is_some() {
+            commands.entity(entity).remove::<CityAttackedThisTurn>();
+            continue;
+        }
+        if health.current >= health.max {
+            continue;
+        }
+        let before = health.current;
+        health.current = health
+            .current
+            .saturating_add(CITY_REGEN_PER_TURN)
+            .min(health.max);
+        println!(
+            "City regen: {entity} hp {} -> {} (+{})",
+            before, health.current, CITY_REGEN_PER_TURN
+        );
+    }
+}
+
 pub fn handle_city_action(
     trigger: On<FromClient<CityActionEvent>>,
     player_map: Res<PlayerMap>,
     recipes: Res<RecipeRegistry>,
     turn_state: Query<&TurnState>,
     mut cities: Query<(&CityOwner, &mut CityProduction), With<City>>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let Ok(state) = turn_state.single() else {
         return;
@@ -83,6 +109,12 @@ pub fn handle_city_action(
     let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
+    if defeated.contains(*player_entity) {
+        return;
+    }
+    if victorious.contains(*player_entity) {
+        return;
+    }
 
     let Ok((owner, mut production)) = cities.get_mut(trigger.message.city) else {
         return;
@@ -211,5 +243,79 @@ pub fn recalculate_city_yields(
         stats.food_per_turn = food_per_turn;
         stats.production = production;
         stats.gold_per_turn = gold_per_turn;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::hex::HexPosition;
+
+    #[test]
+    fn regenerate_unattacked_cities_heals_damaged_city() {
+        let mut app = App::new();
+        app.add_systems(Update, regenerate_unattacked_cities);
+
+        let city = app
+            .world_mut()
+            .spawn((
+                City,
+                HexPosition::new(0, 0),
+                Health {
+                    current: 10,
+                    max: 20,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 12);
+    }
+
+    #[test]
+    fn regenerate_unattacked_cities_skips_attacked_city_and_clears_marker() {
+        let mut app = App::new();
+        app.add_systems(Update, regenerate_unattacked_cities);
+
+        let city = app
+            .world_mut()
+            .spawn((
+                City,
+                CityAttackedThisTurn,
+                HexPosition::new(0, 0),
+                Health {
+                    current: 10,
+                    max: 20,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 10);
+        assert!(app.world().get::<CityAttackedThisTurn>(city).is_none());
+    }
+
+    #[test]
+    fn regenerate_unattacked_cities_does_not_exceed_max_hp() {
+        let mut app = App::new();
+        app.add_systems(Update, regenerate_unattacked_cities);
+
+        let city = app
+            .world_mut()
+            .spawn((
+                City,
+                HexPosition::new(0, 0),
+                Health {
+                    current: 19,
+                    max: 20,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(app.world().get::<Health>(city).unwrap().current, 20);
     }
 }

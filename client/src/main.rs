@@ -84,6 +84,7 @@ fn main() {
                     update_city_visuals,
                     update_unit_positions,
                     update_unit_health_bars,
+                    update_city_health_bars,
                 ),
                 (
                     move_camera_with_keyboard,
@@ -102,6 +103,7 @@ fn main() {
                     update_action_bar,
                     update_production_bar,
                     update_lobby_ui,
+                    update_lose_screen,
                 ),
             ),
         )

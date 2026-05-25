@@ -26,6 +26,17 @@ pub struct UnitSnapshot {
     pub action: ResolveAction,
 }
 
+/// One row per city, gathered by the wrapper before combat resolution.
+#[derive(Clone, Debug)]
+pub struct CitySnapshot {
+    pub entity: Entity,
+    pub owner: Entity,
+    pub hp: i32,
+    #[allow(dead_code)]
+    pub max_hp: u32,
+    pub pos: HexPosition,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResolveAction {
     /// No movement this turn.
@@ -34,9 +45,18 @@ pub enum ResolveAction {
     MoveTo(HexPosition),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CityCapture {
+    pub city: Entity,
+    pub by_unit: Entity,
+    pub new_owner: Entity,
+}
+
 #[derive(Default, Debug)]
 pub struct CombatDeltas {
     pub hp_changes: HashMap<Entity, i32>,
+    pub city_hp_changes: HashMap<Entity, i32>,
+    pub city_captures: Vec<CityCapture>,
     pub final_positions: HashMap<Entity, HexPosition>,
     pub deaths: HashSet<Entity>,
 }
