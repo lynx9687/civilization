@@ -61,22 +61,10 @@ fn main() {
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
         .init_resource::<CameraZoom>()
-        .add_systems(
-            Startup,
-            (
-                connect_to_server,
-                play_background_music,
-            ),
-        )
+        .add_systems(Startup, (connect_to_server, play_background_music))
         .init_state::<UiState>()
         .add_observer(on_your_player)
-        .add_systems(
-            Update,
-            (
-                update_city_visuals,
-                update_unit_health_bars,
-            ),
-        )
+        .add_systems(Update, (update_city_visuals, update_unit_health_bars))
         .run();
 }
 

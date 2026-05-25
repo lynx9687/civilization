@@ -1,7 +1,7 @@
 mod cities;
 mod hexes;
-mod units;
 pub mod theme;
+mod units;
 
 use crate::input::update_hex_highlights;
 use bevy::prelude::*;
@@ -14,16 +14,15 @@ pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_hex_materials)
-            .add_systems(
-                Update,
-                (
-                    spawn_hex_visuals,
-                    spawn_unit_visuals,
-                    spawn_city_visuals,
-                    update_unit_positions,
-                    update_hex_highlights,
-                ),
-            );
+        app.add_systems(Startup, setup_hex_materials).add_systems(
+            Update,
+            (
+                spawn_hex_visuals,
+                spawn_unit_visuals,
+                spawn_city_visuals,
+                update_unit_positions,
+                update_hex_highlights,
+            ),
+        );
     }
 }
