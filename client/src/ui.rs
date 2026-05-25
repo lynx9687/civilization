@@ -24,6 +24,9 @@ pub struct CityUiText;
 pub struct ActionBar;
 
 #[derive(Component)]
+pub struct ActionButton;
+
+#[derive(Component)]
 pub struct VerbButton(pub UnitVerb);
 
 #[derive(Component)]
@@ -115,6 +118,7 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                 parent
                     .spawn((
                         VerbButton(verb),
+                        ActionButton,
                         Button,
                         Node {
                             width: Val::Px(80.0),
@@ -124,8 +128,8 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                             border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
-                        BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-                        BackgroundColor(Color::BLACK),
+                        BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                        BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
                     ))
                     .with_child(Text::new(verb_label(verb)));
             }
@@ -318,10 +322,11 @@ pub fn populate_production_bar(
         parent
             .spawn((
                 ProductionButton(None),
+                ActionButton,
                 Button,
                 production_button_node(),
-                BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-                BackgroundColor(Color::BLACK),
+                BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
             ))
             .with_child(Text::new("None"));
 
@@ -331,10 +336,11 @@ pub fn populate_production_bar(
             parent
                 .spawn((
                     ProductionButton(Some(*id)),
+                    ActionButton,
                     Button,
                     production_button_node(),
-                    BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-                    BackgroundColor(Color::BLACK),
+                    BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                    BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
                 ))
                 .with_child(Text::new(recipe_button_label(recipe.output, &units)));
         }
@@ -397,7 +403,7 @@ pub fn update_production_bar(
 pub fn update_action_bar(
     ui_state: Res<State<UiState>>,
     mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
-    mut buttons: Query<(&VerbButton, &mut BackgroundColor)>,
+    mut buttons: Query<(&VerbButton, &mut BackgroundColor, &mut BorderColor)>,
     units: Query<&Unit>,
     registry: Res<UnitRegistry>,
 ) {
@@ -427,12 +433,81 @@ pub fn update_action_bar(
     };
     let available = available_verbs(def);
 
-    for (button, mut bg) in &mut buttons {
+    for (button, mut bg, mut border) in &mut buttons {
         if available.contains(&button.0) {
-            *bg = BackgroundColor(Color::BLACK);
+            *bg = BackgroundColor::from(theme::FINISH_BUTTON.background.idle);
+            *border = BorderColor::from(theme::FINISH_BUTTON.border.idle);
         } else {
             // greyed: visually distinct but click handler will also reject
             *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+            *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+        }
+    }
+}
+
+pub fn action_button_visual_system(
+    ui_state: Res<State<UiState>>,
+    units: Query<&Unit>,
+    registry: Res<UnitRegistry>,
+    mut buttons: Query<
+        (
+            Option<&VerbButton>,
+            Option<&ProductionButton>,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        (With<ActionButton>, Changed<Interaction>),
+    >,
+) {
+    let thm = &theme::FINISH_BUTTON;
+
+    for (verb_button, _production_button, interaction, mut bg, mut border) in &mut buttons {
+        let disabled = if let Some(VerbButton(verb)) = verb_button {
+            let unit_entity = match ui_state.selection() {
+                Some(InputSelection::UnitSelected { unit }) => *unit,
+                Some(InputSelection::Targeting { unit, .. }) => *unit,
+                _ => {
+                    *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+                    *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+                    continue;
+                }
+            };
+
+            let Ok(unit) = units.get(unit_entity) else {
+                *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+                *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+                continue;
+            };
+            let Some(def) = registry.get(&unit.type_id) else {
+                *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+                *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+                continue;
+            };
+            !available_verbs(def).contains(verb)
+        } else {
+            false
+        };
+
+        if disabled {
+            *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+            *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+            continue;
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = thm.background.pressed.into();
+                *border = thm.border.pressed.into();
+            }
+            Interaction::Hovered => {
+                *bg = thm.background.hover.into();
+                *border = thm.border.hover.into();
+            }
+            Interaction::None => {
+                *bg = thm.background.idle.into();
+                *border = thm.border.idle.into();
+            }
         }
     }
 }
@@ -606,6 +681,7 @@ impl Plugin for UiPlugin {
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
+                    action_button_visual_system,
                     finish_turn_trigger_system,
                     finish_turn_visual_system,
                     reset_ui_state_on_turn_state_change,
