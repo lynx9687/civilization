@@ -593,12 +593,15 @@ pub fn update_map_config_ui(
     }
 
     // Highlight the chosen size and the nearest level for each terrain knob.
+    // Write only on an actual change so we don't trip Bevy change-detection
+    // (and a UI re-extract) every frame for buttons whose color is unchanged.
     for (MapSizeButton(size), mut bg) in &mut size_buttons {
-        *bg = BackgroundColor(if *size == settings.size {
+        let want = if *size == settings.size {
             SELECTED_BG
         } else {
             UNSELECTED_BG
-        });
+        };
+        bg.set_if_neq(BackgroundColor(want));
     }
     for (TerrainLevelButton { knob, level }, mut bg) in &mut level_buttons {
         let current = match knob {
@@ -606,10 +609,11 @@ pub fn update_map_config_ui(
             TerrainKnob::Forest => settings.forest,
             TerrainKnob::Water => settings.water,
         };
-        *bg = BackgroundColor(if nearest_level(current) == *level {
+        let want = if nearest_level(current) == *level {
             SELECTED_BG
         } else {
             UNSELECTED_BG
-        });
+        };
+        bg.set_if_neq(BackgroundColor(want));
     }
 }
