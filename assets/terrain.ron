@@ -1,0 +1,11 @@
+// Canonical per-terrain resource yields (food, production, gold).
+// Keys must match Terrain::name(). Edit to retune the economy without recompiling.
+// Mountain/Water are impassable for land units (see Terrain::is_passable); they
+// still yield to a city that claims them (coast gold, mountain production).
+{
+    "grassland": (food: 3, production: 1, gold: 1),
+    "hill":      (food: 1, production: 3, gold: 1),
+    "forest":    (food: 2, production: 2, gold: 0),
+    "mountain":  (food: 0, production: 2, gold: 0),
+    "water":     (food: 1, production: 0, gold: 2),
+}

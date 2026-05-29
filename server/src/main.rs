@@ -1,6 +1,7 @@
 mod cities;
 mod cities_systems;
 mod combat;
+mod map_gen;
 mod players;
 mod turn;
 
@@ -16,16 +17,18 @@ use bevy_replicon_renet::{
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
     renet::ConnectionConfig,
 };
-use shared::{components::*, hex::generate_grid, plugin::SharedPlugin};
+use shared::{components::*, map_settings::MapSettings, plugin::SharedPlugin};
 
 use cities::*;
 use cities_systems::*;
 use combat::{cleanup_dead_units, resolve_movement, resolve_ranged_attacks};
+use map_gen::{
+    MapTiles, cleanup_map_on_lobby, generate_map_on_start, should_cleanup_map, should_generate_map,
+};
 use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
 use turn::*;
 
 const PROTOCOL_ID: u64 = 0;
-const GRID_RADIUS: i32 = 5;
 
 #[derive(Resource)]
 struct BindAddr(SocketAddr);
@@ -51,7 +54,9 @@ fn main() {
         .insert_resource(BindAddr(addr))
         .init_resource::<PlayerMap>()
         .init_resource::<PlayerState>()
-        .add_systems(Startup, (start_server, spawn_grid))
+        .init_resource::<MapTiles>()
+        .init_resource::<MapSettings>()
+        .add_systems(Startup, (start_server, spawn_initial_state))
         .add_observer(handle_unit_action)
         .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
@@ -64,6 +69,8 @@ fn main() {
                 handle_new_clients,
                 handle_disconnects,
                 update_turn_phase,
+                generate_map_on_start.run_if(should_generate_map),
+                cleanup_map_on_lobby.run_if(should_cleanup_map),
                 promote_waiting_players,
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 // Resolution window: gated as a group so all resolvers see
@@ -124,18 +131,12 @@ fn start_server(
     Ok(())
 }
 
-fn spawn_grid(mut commands: Commands) {
-    for pos in generate_grid(GRID_RADIUS) {
-        commands.spawn((Replicated, HexTile, pos, DEFAULT_TILE_RESOURCES));
-    }
-
-    commands.spawn((TurnState {
+/// Spawns the lobby turn-state. The map itself is generated at game start
+/// (`generate_map_on_start`), once the host's settings and player count are known.
+fn spawn_initial_state(mut commands: Commands) {
+    commands.spawn(TurnState {
         phase: TurnPhase::Lobby,
         turn_number: 0,
-    },));
-
-    println!(
-        "Spawned grid with radius {GRID_RADIUS} ({} tiles)",
-        3 * GRID_RADIUS * GRID_RADIUS + 3 * GRID_RADIUS + 1
-    );
+    });
+    println!("Server ready; map will be generated when the host starts a game");
 }
