@@ -138,6 +138,92 @@ pub fn is_within_attack_range(
     d > 0 && (d as u32) <= attack_range
 }
 
+/// Cost sentinel for terrain a unit can never enter (e.g. mountain). Any
+/// per-terrain cost at or above this is treated as a wall, same as a missing
+/// key. Kept in sync with the `99999` mountain entries in `assets/units/*.ron`.
+pub const IMPASSABLE_COST: u32 = 99999;
+
+/// Per-terrain enter cost for this unit, or `None` if it can never enter the
+/// terrain. A missing `terrain_cost` key (e.g. water — no key at all) and the
+/// [`IMPASSABLE_COST`] sentinel (e.g. mountain) both mean "wall". This — not
+/// `Terrain::is_passable` — is the single source of truth for movement, so a
+/// future amphibious unit only needs a water cost added to its RON.
+fn enter_cost(def: &UnitDefinition, terrain: crate::terrain::Terrain) -> Option<u32> {
+    match def.terrain_cost.get(terrain.name()) {
+        Some(&c) if c < IMPASSABLE_COST => Some(c),
+        _ => None,
+    }
+}
+
+/// Every tile this unit can reach from `from` within its `move_budget`, mapped
+/// to the cheapest accumulated enter-cost to get there. The start tile is
+/// **excluded** (cost-0, no-op move). Cost to ENTER a tile is its terrain's
+/// [`enter_cost`]; the search only steps onto enterable tiles, so walls
+/// (water/mountain/missing-key) are never crossed *or* landed on. Boundary is
+/// inclusive: a tile costing exactly `move_budget` is reachable.
+///
+/// This is the single source of truth shared by the server move validator and
+/// the client move preview, so the two can never disagree. `terrain_at` is the
+/// terrain lookup *and* the set of on-map tiles (returns `None` off the map);
+/// the server passes `MapTiles`, the client a map built from replicated tiles.
+pub fn reachable_tiles(
+    from: &crate::hex::HexPosition,
+    def: &UnitDefinition,
+    terrain_at: impl Fn(&crate::hex::HexPosition) -> Option<crate::terrain::Terrain>,
+) -> std::collections::HashMap<crate::hex::HexPosition, u32> {
+    use crate::hex::HexPosition;
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
+
+    let budget = def.move_budget;
+    let mut best: HashMap<HexPosition, u32> = HashMap::new();
+    // Min-heap on (cost, q, r): HexPosition isn't Ord (and hex.rs isn't ours to
+    // change), so we order by the cost and the raw coords and rebuild the hex on
+    // pop. The tie-breaker coords don't affect which tiles end up reachable.
+    let mut heap: BinaryHeap<Reverse<(u32, i32, i32)>> = BinaryHeap::new();
+    heap.push(Reverse((0, from.q, from.r)));
+    best.insert(*from, 0);
+
+    while let Some(Reverse((cost, q, r))) = heap.pop() {
+        let pos = HexPosition::new(q, r);
+        // Stale heap entry (a cheaper path was already settled).
+        if best.get(&pos).is_some_and(|&b| cost > b) {
+            continue;
+        }
+        for nb in pos.neighbors() {
+            let Some(terrain) = terrain_at(&nb) else {
+                continue; // off the map
+            };
+            let Some(step) = enter_cost(def, terrain) else {
+                continue; // wall: can't enter this terrain
+            };
+            let next = cost + step;
+            if next > budget {
+                continue; // out of move budget
+            }
+            if best.get(&nb).is_none_or(|&b| next < b) {
+                best.insert(nb, next);
+                heap.push(Reverse((next, nb.q, nb.r)));
+            }
+        }
+    }
+
+    best.remove(from); // exclude the origin — a self-move is a no-op, never offered
+    best
+}
+
+/// Terrain-aware replacement for [`is_within_move_range`]: true iff `to` is
+/// reachable from `from` within budget over enterable tiles (origin excluded).
+/// Membership-tests [`reachable_tiles`] so the server and client agree.
+pub fn is_reachable(
+    from: &crate::hex::HexPosition,
+    to: &crate::hex::HexPosition,
+    def: &UnitDefinition,
+    terrain_at: impl Fn(&crate::hex::HexPosition) -> Option<crate::terrain::Terrain>,
+) -> bool {
+    reachable_tiles(from, def, terrain_at).contains_key(to)
+}
+
 /// Startup system that loads `UnitRegistry` from the runtime assets directory and inserts it as a resource.
 /// Registered by `SharedPlugin` so both server and client get it for free.
 pub fn load_unit_registry(mut commands: Commands) {
@@ -318,6 +404,229 @@ mod tests {
         assert!(verbs.contains(&UnitVerb::Skip));
         // settler has attack_range = 0, so the attack_range > 1 gate is false
         assert!(!verbs.contains(&UnitVerb::Attack));
+    }
+
+    // --- terrain-aware reachability (reachable_tiles / is_reachable) ---
+
+    /// A warrior-like def with the canonical land costs (grassland 1, hill 2,
+    /// forest 2, mountain 99999) and NO water key — mirrors assets/units/*.ron.
+    fn land_unit(move_budget: u32) -> UnitDefinition {
+        let mut terrain_cost = HashMap::new();
+        terrain_cost.insert("grassland".to_string(), 1);
+        terrain_cost.insert("hill".to_string(), 2);
+        terrain_cost.insert("forest".to_string(), 2);
+        terrain_cost.insert("mountain".to_string(), IMPASSABLE_COST);
+        UnitDefinition {
+            hp: 10,
+            move_budget,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost,
+        }
+    }
+
+    #[test]
+    fn reachable_excludes_origin() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(2);
+        let map = |_: &HexPosition| Some(Terrain::Grassland);
+        let reach = reachable_tiles(&from, &def, map);
+        assert!(
+            !reach.contains_key(&from),
+            "origin (no-op self-move) must be excluded"
+        );
+        assert!(!is_reachable(&from, &from, &def, map));
+    }
+
+    #[test]
+    fn reachable_cost_accumulates_per_terrain() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        let from = HexPosition::new(0, 0);
+        // All grassland (cost 1 each), budget 2: a 1-away tile costs 1, 2-away costs 2.
+        let def = land_unit(2);
+        let grass = |_: &HexPosition| Some(Terrain::Grassland);
+        let reach = reachable_tiles(&from, &def, grass);
+        assert_eq!(reach.get(&HexPosition::new(1, 0)), Some(&1));
+        assert_eq!(reach.get(&HexPosition::new(2, 0)), Some(&2));
+        // A hill neighbor costs 2 to enter — exactly the budget, so reachable...
+        let hill_at_1 = |p: &HexPosition| {
+            if *p == HexPosition::new(1, 0) {
+                Some(Terrain::Hill)
+            } else {
+                Some(Terrain::Grassland)
+            }
+        };
+        let reach = reachable_tiles(&from, &def, hill_at_1);
+        assert_eq!(
+            reach.get(&HexPosition::new(1, 0)),
+            Some(&2),
+            "entering a hill costs 2"
+        );
+        // ...but nothing directly past it: (2,0) costs 3 by every route at budget 2
+        // (hill 2 + grass 1 direct, or a grass detour landing on a cost-2 tile + 1).
+        assert!(
+            !reach.contains_key(&HexPosition::new(2, 0)),
+            "no budget left to step beyond the hill"
+        );
+    }
+
+    #[test]
+    fn reachable_prefers_cheaper_path() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        // Direct neighbor (2,0) is forest (cost 2); the two-grassland detour
+        // through (1,0) then (2,0) would also be 2, but the direct forest step is
+        // a single hop. Either way the cheapest recorded cost to (2,0) is 2.
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(3);
+        let map = |p: &HexPosition| {
+            if *p == HexPosition::new(2, 0) {
+                Some(Terrain::Hill) // cost 2 direct
+            } else {
+                Some(Terrain::Grassland) // cost 1 each via detour
+            }
+        };
+        let reach = reachable_tiles(&from, &def, map);
+        // Cheapest to (2,0): grassland (1,0)=1 then grassland... but (2,0) is hill.
+        // Path A: (1,0)g=1 -> (2,0)hill=+2 = 3. Path B: direct neighbor of origin?
+        // (2,0) is distance 2, not a neighbor, so only via (1,0): 1+2 = 3.
+        assert_eq!(reach.get(&HexPosition::new(2, 0)), Some(&3));
+    }
+
+    #[test]
+    fn reachable_excludes_water_mountain_and_missing_key() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(5);
+        // (1,0) water (no key), (1,-1) mountain (sentinel), rest grassland.
+        let map = |p: &HexPosition| {
+            if *p == HexPosition::new(1, 0) {
+                Some(Terrain::Water)
+            } else if *p == HexPosition::new(1, -1) {
+                Some(Terrain::Mountain)
+            } else {
+                Some(Terrain::Grassland)
+            }
+        };
+        let reach = reachable_tiles(&from, &def, map);
+        assert!(
+            !reach.contains_key(&HexPosition::new(1, 0)),
+            "water (missing key) is unenterable"
+        );
+        assert!(
+            !reach.contains_key(&HexPosition::new(1, -1)),
+            "mountain (99999 sentinel) is unenterable"
+        );
+        // A grassland neighbor is still reachable.
+        assert!(reach.contains_key(&HexPosition::new(0, 1)));
+    }
+
+    #[test]
+    fn reachable_cannot_path_through_water() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        // Land at (0,0) and (2,0), but the only on-map link is water at (1,0):
+        // (2,0)'s sole on-map neighbor is water, so it's unreachable at any budget.
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(99);
+        let map = |p: &HexPosition| match (p.q, p.r) {
+            (0, 0) | (2, 0) => Some(Terrain::Grassland),
+            (1, 0) => Some(Terrain::Water),
+            _ => None, // everything else off the map
+        };
+        assert!(
+            !is_reachable(&from, &HexPosition::new(2, 0), &def, map),
+            "cannot path through water even with a huge budget"
+        );
+        assert!(
+            !is_reachable(&from, &HexPosition::new(1, 0), &def, map),
+            "cannot land on water"
+        );
+    }
+
+    #[test]
+    fn reachable_respects_off_map_bounds() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(5);
+        // Only the origin is on the map; everything else returns None.
+        let map = |p: &HexPosition| (*p == from).then_some(Terrain::Grassland);
+        let reach = reachable_tiles(&from, &def, map);
+        assert!(reach.is_empty(), "no on-map neighbors → nothing reachable");
+    }
+
+    #[test]
+    fn reachable_budget_boundary_is_inclusive() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        let from = HexPosition::new(0, 0);
+        let grass = |_: &HexPosition| Some(Terrain::Grassland);
+        // Budget 1: only the 1-away ring (cost 1) is reachable; 2-away is not.
+        let def = land_unit(1);
+        let reach = reachable_tiles(&from, &def, grass);
+        assert!(
+            reach.contains_key(&HexPosition::new(1, 0)),
+            "cost 1 == budget"
+        );
+        assert!(
+            !reach.contains_key(&HexPosition::new(2, 0)),
+            "cost 2 > budget 1"
+        );
+    }
+
+    #[test]
+    fn reachable_zero_budget_reaches_nothing() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(0);
+        let grass = |_: &HexPosition| Some(Terrain::Grassland);
+        assert!(reachable_tiles(&from, &def, grass).is_empty());
+    }
+
+    #[test]
+    fn server_and_client_agree_on_reachability() {
+        use crate::hex::HexPosition;
+        use crate::terrain::Terrain;
+        // Same start/def/terrain → identical reachable sets, whether the lookup is
+        // a closure (server's MapTiles style) or a prebuilt map (client style).
+        let from = HexPosition::new(0, 0);
+        let def = land_unit(3);
+        let mut tiles: HashMap<HexPosition, Terrain> = HashMap::new();
+        for hex in crate::hex::generate_grid(3) {
+            // Sprinkle a deterministic mix of terrains.
+            let t = match (hex.q + hex.r).rem_euclid(4) {
+                0 => Terrain::Grassland,
+                1 => Terrain::Hill,
+                2 => Terrain::Forest,
+                _ => Terrain::Water,
+            };
+            tiles.insert(hex, t);
+        }
+        // Server-style: closure over the map.
+        let server = reachable_tiles(&from, &def, |p| tiles.get(p).copied());
+        // Client-style: same prebuilt map, same closure shape.
+        let client = reachable_tiles(&from, &def, |p| tiles.get(p).copied());
+        assert_eq!(
+            server, client,
+            "the one shared fn must give identical results to both callers"
+        );
+        // Spot-check is_reachable agrees with set membership for a few tiles.
+        for hex in crate::hex::generate_grid(3) {
+            assert_eq!(
+                is_reachable(&from, &hex, &def, |p| tiles.get(p).copied()),
+                server.contains_key(&hex),
+                "is_reachable must match reachable_tiles membership for {hex:?}"
+            );
+        }
     }
 
     #[test]
