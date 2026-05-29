@@ -556,4 +556,221 @@ mod tests {
         // No two units share a tile across all players.
         assert_eq!(occupied.len(), 3 * STARTING_UNITS.len());
     }
+
+    /// Counts tiles of each terrain across a map.
+    fn histogram(tiles: &[(HexPosition, Terrain)]) -> HashMap<Terrain, usize> {
+        let mut counts: HashMap<Terrain, usize> = HashMap::new();
+        for (_, t) in tiles {
+            *counts.entry(*t).or_default() += 1;
+        }
+        counts
+    }
+
+    fn count_of(tiles: &[(HexPosition, Terrain)], terrain: Terrain) -> usize {
+        tiles.iter().filter(|(_, t)| *t == terrain).count()
+    }
+
+    /// Builds settings with overridden knobs (size/seed kept at default).
+    fn knobs(hilliness: f32, forest: f32, water: f32) -> MapSettings {
+        MapSettings {
+            hilliness,
+            forest,
+            water,
+            ..MapSettings::default()
+        }
+    }
+
+    /// Guards the integer-lattice trap: Perlin is exactly 0 at integer
+    /// coordinates, so sampling without a fractional frequency yields a flat
+    /// single-terrain map. With banding we expect several terrain types.
+    #[test]
+    fn map_has_multiple_terrain_types() {
+        for seed in 0..6u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let tiles = generate_map(&settings(), 4, &mut rng);
+            let kinds = histogram(&tiles).len();
+            assert!(
+                kinds >= 3,
+                "seed {seed}: expected coherent bands (>=3 terrain types), got {kinds}"
+            );
+        }
+    }
+
+    /// Determinism across process runs is structural: the noise seed flows from
+    /// the RNG and output is built in the disc's fixed scan order, so a fresh RNG
+    /// seeded identically reproduces the map. (HashMap hashing is randomized per
+    /// run; this asserts it never leaks into the result.)
+    #[test]
+    fn generate_map_reproduces_from_fresh_rng() {
+        for seed in 0..4u64 {
+            for players in 2..=6usize {
+                let first = {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    generate_map(&settings(), players, &mut rng)
+                };
+                // Drop the RNG entirely, re-seed from scratch (mimics a new run).
+                let second = {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    generate_map(&settings(), players, &mut rng)
+                };
+                assert_eq!(first, second, "seed {seed}, {players}p must reproduce");
+            }
+        }
+    }
+
+    /// Different seeds must produce different layouts (the noise field varies),
+    /// not just the same proportions in the same places.
+    #[test]
+    fn different_seeds_give_different_layouts() {
+        let a = {
+            let mut rng = StdRng::seed_from_u64(1);
+            generate_map(&settings(), 4, &mut rng)
+        };
+        let b = {
+            let mut rng = StdRng::seed_from_u64(2);
+            generate_map(&settings(), 4, &mut rng)
+        };
+        assert_ne!(a, b, "distinct seeds should yield distinct maps");
+    }
+
+    /// Higher `water` ⇒ more water tiles, while the land stays one connected
+    /// component. Aggregated over seeds because a single small map can wobble.
+    #[test]
+    fn higher_water_means_more_water_but_stays_connected() {
+        let players = 4;
+        let mut low_water = 0usize;
+        let mut high_water = 0usize;
+        for seed in 0..8u64 {
+            let low = {
+                let mut rng = StdRng::seed_from_u64(seed);
+                generate_map(&knobs(0.3, 0.3, 0.1), players, &mut rng)
+            };
+            let high = {
+                let mut rng = StdRng::seed_from_u64(seed);
+                generate_map(&knobs(0.3, 0.3, 0.6), players, &mut rng)
+            };
+            low_water += count_of(&low, Terrain::Water);
+            high_water += count_of(&high, Terrain::Water);
+
+            // Connectivity invariant must hold at both extremes.
+            for tiles in [&low, &high] {
+                let map: HashMap<HexPosition, Terrain> = tiles.iter().copied().collect();
+                let component = largest_passable_component(&map);
+                assert_eq!(
+                    component.len(),
+                    passable_positions(tiles).len(),
+                    "seed {seed}: land must stay one component at any water level"
+                );
+                assert!(
+                    passable_positions(tiles).len() >= players * STARTING_UNITS.len(),
+                    "seed {seed}: must still seat units even with high water"
+                );
+            }
+        }
+        assert!(
+            high_water > low_water,
+            "more water knob should yield more water tiles: low={low_water}, high={high_water}"
+        );
+    }
+
+    /// Higher `hilliness` ⇒ more hills + mountains, aggregated over seeds.
+    #[test]
+    fn higher_hilliness_means_more_relief() {
+        let players = 4;
+        let mut low_relief = 0usize;
+        let mut high_relief = 0usize;
+        for seed in 0..8u64 {
+            let low = {
+                let mut rng = StdRng::seed_from_u64(seed);
+                generate_map(&knobs(0.1, 0.3, 0.2), players, &mut rng)
+            };
+            let high = {
+                let mut rng = StdRng::seed_from_u64(seed);
+                generate_map(&knobs(0.9, 0.3, 0.2), players, &mut rng)
+            };
+            low_relief += count_of(&low, Terrain::Hill) + count_of(&low, Terrain::Mountain);
+            high_relief += count_of(&high, Terrain::Hill) + count_of(&high, Terrain::Mountain);
+        }
+        assert!(
+            high_relief > low_relief,
+            "more hilliness should yield more hills+mountains: low={low_relief}, high={high_relief}"
+        );
+    }
+
+    /// Higher `forest` ⇒ more forest tiles, aggregated over seeds.
+    #[test]
+    fn higher_forest_means_more_forest() {
+        let players = 4;
+        let mut low_forest = 0usize;
+        let mut high_forest = 0usize;
+        for seed in 0..8u64 {
+            let low = {
+                let mut rng = StdRng::seed_from_u64(seed);
+                generate_map(&knobs(0.3, 0.1, 0.2), players, &mut rng)
+            };
+            let high = {
+                let mut rng = StdRng::seed_from_u64(seed);
+                generate_map(&knobs(0.3, 0.9, 0.2), players, &mut rng)
+            };
+            low_forest += count_of(&low, Terrain::Forest);
+            high_forest += count_of(&high, Terrain::Forest);
+        }
+        assert!(
+            high_forest > low_forest,
+            "more forest knob should yield more forest tiles: low={low_forest}, high={high_forest}"
+        );
+    }
+
+    /// A default map is land-dominant with every terrain represented: rank-based
+    /// banding must yield real relief and forest at the *default* knobs, not only
+    /// at extremes. Guards the bell-curve-vs-absolute-threshold regression that
+    /// produced flat, all-water default maps.
+    #[test]
+    fn default_map_has_relief_and_is_land_dominant() {
+        for seed in 0..6u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let tiles = generate_map(&settings(), 4, &mut rng);
+            let h = histogram(&tiles);
+            assert!(
+                h.get(&Terrain::Hill).copied().unwrap_or(0) > 0,
+                "seed {seed}: default map must have hills"
+            );
+            assert!(
+                h.get(&Terrain::Mountain).copied().unwrap_or(0) > 0,
+                "seed {seed}: default map must have mountains"
+            );
+            assert!(
+                h.get(&Terrain::Forest).copied().unwrap_or(0) > 0,
+                "seed {seed}: default map must have forest"
+            );
+            // Land should dominate — most of a default map is playable, not sea.
+            let water = count_of(&tiles, Terrain::Water);
+            assert!(
+                water < tiles.len() / 2,
+                "seed {seed}: default map should be land-dominant, got {water}/{} water",
+                tiles.len()
+            );
+        }
+    }
+
+    /// Map radius (and thus tile count) grows with player count but stays capped
+    /// small — short games. Asserts the existing sizing philosophy is preserved.
+    #[test]
+    fn map_grows_with_players_but_stays_capped() {
+        let two = {
+            let mut rng = StdRng::seed_from_u64(3);
+            generate_map(&settings(), 2, &mut rng).len()
+        };
+        let eight = {
+            let mut rng = StdRng::seed_from_u64(3);
+            generate_map(&settings(), 8, &mut rng).len()
+        };
+        assert!(eight > two, "more players should yield a larger map");
+        // Radius is clamped to 16; a full disc of radius 16 is 817 tiles. Stay
+        // well under a sprawling map to keep games short.
+        assert!(
+            eight <= 817,
+            "map radius must stay capped, got {eight} tiles"
+        );
+    }
 }
