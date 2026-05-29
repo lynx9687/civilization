@@ -1,7 +1,9 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::unit_definition::{UnitRegistry, is_within_attack_range, is_within_move_range};
+use shared::unit_definition::{
+    UnitRegistry, is_reachable, is_within_attack_range, reachable_tiles,
+};
 use shared::{
     cities::{City, CityOwner},
     components::*,
@@ -114,6 +116,7 @@ pub fn update_hex_highlights(
     cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
     all_tiles: Query<&HexPosition, With<HexTile>>,
+    terrain_tiles: Query<(&HexPosition, &Terrain), With<HexTile>>,
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
@@ -143,9 +146,16 @@ pub fn update_hex_highlights(
                 };
                 match verb {
                     TargetableVerb::Move => {
+                        // Compute the terrain-aware reachable set ONCE (same shared
+                        // fn the server validates with, so the preview can't lie),
+                        // then membership-filter the tiles instead of re-pathing per
+                        // tile. The terrain map doubles as the on-map tile set.
+                        let terrain_map: std::collections::HashMap<HexPosition, Terrain> =
+                            terrain_tiles.iter().map(|(p, t)| (*p, *t)).collect();
+                        let reachable = reachable_tiles(pos, def, |p| terrain_map.get(p).copied());
                         let moves = all_tiles
                             .iter()
-                            .filter(|t| is_within_move_range(pos, t, def.move_budget))
+                            .filter(|t| reachable.contains_key(*t))
                             .filter(|t| {
                                 cities
                                     .iter()
@@ -222,6 +232,7 @@ pub fn handle_left_click(
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
+    terrain_tiles: Query<(&HexPosition, &Terrain), With<HexTile>>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
@@ -296,7 +307,13 @@ pub fn handle_left_click(
                     let valid_city_target = city_at_target.is_none_or(|(_, city_owner)| {
                         city_owner.entity == player_entity || def.attack_range == 1
                     });
-                    if is_within_move_range(pos, &target, def.move_budget) && valid_city_target {
+                    // Validate with the SAME shared reachability the preview used and
+                    // the server will re-check, so an accepted click never bounces.
+                    let terrain_map: std::collections::HashMap<HexPosition, Terrain> =
+                        terrain_tiles.iter().map(|(p, t)| (*p, *t)).collect();
+                    let reachable =
+                        is_reachable(pos, &target, def, |p| terrain_map.get(p).copied());
+                    if reachable && valid_city_target {
                         commands.client_trigger(UnitActionEvent {
                             unit,
                             action: UnitAction::Move { target },
