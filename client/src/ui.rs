@@ -654,3 +654,9 @@ pub fn update_lose_screen(
         };
     }
 }
+
+pub fn mouse_not_over_ui_button(buttons: Query<&Interaction, With<Button>>) -> bool {
+    !buttons
+        .iter()
+        .any(|interaction| matches!(interaction, Interaction::Pressed | Interaction::Hovered))
+}

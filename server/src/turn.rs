@@ -31,10 +31,7 @@ pub struct PlayerState {
     pub finished_cnt: i32,
 }
 
-pub fn update_turn_phase(
-    players: Query<(), With<Player>>,
-    mut turn_state: Query<&mut TurnState>,
-) {
+pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query<&mut TurnState>) {
     let count = players.iter().count();
     let Ok(mut state) = turn_state.single_mut() else {
         return;
