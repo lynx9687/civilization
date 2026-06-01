@@ -46,14 +46,6 @@ pub fn local_player_victorious(
         .is_some_and(|player| victorious.contains(player))
 }
 
-pub fn local_player_game_over(
-    controller: &Controller,
-    defeated: &Query<(), With<DefeatedPlayer>>,
-    victorious: &Query<(), With<VictoriousPlayer>>,
-) -> bool {
-    local_player_defeated(controller, defeated) || local_player_victorious(controller, victorious)
-}
-
 /// Terminal outcome for the local player once the server marks the game complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameOutcome {

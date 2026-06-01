@@ -1,13 +1,9 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
-use shared::components::{
-    DefeatedPlayer, Host, PLAYER_COLORS, Player, TurnPhase, TurnState, VictoriousPlayer,
-    WaitingPlayer,
-};
+use shared::components::{Host, PLAYER_COLORS, Player, TurnPhase, TurnState, WaitingPlayer};
 use shared::events::StartGame;
 
-use crate::input::Controller;
-use crate::input::local_player_game_over;
+use crate::input::{Controller, UiState};
 
 #[derive(Component)]
 pub struct LobbyOverlay;
@@ -298,21 +294,18 @@ pub fn update_lobby_ui(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn handle_start_game_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     buttons: Query<(), With<StartGameButton>>,
     turn_state: Query<&TurnState>,
     players: Query<(), With<Player>>,
-    controller: Res<Controller>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
+    ui_state: Res<UiState>,
 ) {
     if !buttons.contains(click.entity) {
         return;
     }
-    if local_player_game_over(&controller, &defeated, &victorious) {
+    if ui_state.is_game_finished() {
         return;
     }
     let Ok(state) = turn_state.single() else {
