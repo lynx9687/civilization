@@ -32,7 +32,7 @@ pub struct PlayerState {
 }
 
 pub fn update_turn_phase(
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: Query<(), With<Player>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
     let count = players.iter().count();
