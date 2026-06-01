@@ -10,8 +10,8 @@ use shared::unit_definition::{available_verbs, is_within_attack_range};
 use shared::units::*;
 use shared::{components::*, hex::HexPosition};
 
-use crate::GRID_RADIUS;
 use crate::cities::spawn_city_at_tile;
+use crate::map_gen::MapTiles;
 use crate::players::PlayerMap;
 
 const MIN_CITY_CENTER_DISTANCE: i32 = 4;
@@ -183,6 +183,9 @@ pub fn handle_unit_action(
     queued_moves: Query<(Entity, &MoveTo, &Owner), With<Unit>>, // for same-turn collision detection
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
+    // Optional so the observer's unit tests (which insert no map) skip the bounds
+    // check; in the running server MapTiles is always present and populated.
+    map_tiles: Option<Res<MapTiles>>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
@@ -235,9 +238,22 @@ pub fn handle_unit_action(
                 println!("Rejected move: out of range");
                 return;
             }
-            if !target.in_bounds(GRID_RADIUS) {
-                println!("Rejected move: out of bounds");
-                return;
+            // Reject moves off the map or onto impassable terrain (water/mountain).
+            // Per-terrain movement *cost* is layered on top of this by later work;
+            // this guard is what makes the generator's connected-landmass guarantee
+            // meaningful. Optional so the observer's unit tests can omit the map.
+            if let Some(map_tiles) = &map_tiles {
+                match map_tiles.0.get(target) {
+                    None => {
+                        println!("Rejected move: target tile not on map");
+                        return;
+                    }
+                    Some(terrain) if !terrain.is_passable() => {
+                        println!("Rejected move: target terrain is impassable");
+                        return;
+                    }
+                    Some(_) => {}
+                }
             }
             // Reject if a friendly is currently standing on the target tile.
             if units
@@ -1112,6 +1128,111 @@ mod tests {
             "Move to friendly-occupied tile must be rejected"
         );
         let _ = (player, blocker);
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_move_onto_impassable_terrain() {
+        use crate::map_gen::MapTiles;
+        use shared::terrain::Terrain;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+
+        // (1,0) is impassable water, (2,0) is passable land; both within budget 2.
+        let mut map = HashMap::new();
+        map.insert(HexPosition::new(0, 0), Terrain::Grassland);
+        map.insert(HexPosition::new(1, 0), Terrain::Water);
+        map.insert(HexPosition::new(2, 0), Terrain::Grassland);
+        app.insert_resource(MapTiles(map));
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            (client, unit)
+        };
+
+        // Move onto water must be rejected (impassable terrain).
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_none(),
+            "move onto impassable water must be rejected"
+        );
+
+        // Move onto passable land within range must be accepted.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(2, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "move onto passable land within range must be accepted"
+        );
     }
 
     #[test]

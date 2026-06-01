@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use shared::{
     components::{HexTile, PLAYER_COLORS},
     hex::{HexPosition, hex_to_pixel},
+    terrain::Terrain,
 };
 
 use crate::HEX_SIZE;
@@ -16,6 +17,17 @@ pub struct HexMaterials {
     pub valid_move: Handle<ColorMaterial>,
     pub claimed: Vec<Handle<ColorMaterial>>,
     pub valid_attack: Handle<ColorMaterial>,
+    /// Base material per terrain, indexed by `terrain as usize` (see `Terrain::ALL`).
+    /// Placeholder is grass for every terrain; the per-terrain visuals work swaps
+    /// in distinct textures/colors here.
+    pub terrain: Vec<Handle<ColorMaterial>>,
+}
+
+impl HexMaterials {
+    /// The unhighlighted base material for a tile's terrain.
+    pub fn terrain_material(&self, terrain: Terrain) -> Handle<ColorMaterial> {
+        self.terrain[terrain as usize].clone()
+    }
 }
 
 pub fn setup_hex_materials(
@@ -42,21 +54,29 @@ pub fn setup_hex_materials(
             default_texture.clone(),
             Color::srgb(0.8, 0.3, 0.3),
         )),
+        // Placeholder: grass for every terrain. Per-terrain visuals replace these.
+        terrain: Terrain::ALL
+            .iter()
+            .map(|_| materials.add(hex_material(default_texture.clone(), Color::WHITE)))
+            .collect(),
     };
     commands.insert_resource(hex_materials);
 }
 
 pub fn spawn_hex_visuals(
-    tiles: Query<(Entity, &HexPosition), Added<HexTile>>,
+    tiles: Query<(Entity, &HexPosition, Option<&Terrain>), Added<HexTile>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     hex_materials: Res<HexMaterials>,
 ) {
-    for (entity, pos) in &tiles {
+    for (entity, pos, terrain) in &tiles {
         let pixel = hex_to_pixel(pos, HEX_SIZE);
+        let base = terrain
+            .map(|t| hex_materials.terrain_material(*t))
+            .unwrap_or_else(|| hex_materials.default.clone());
         commands.entity(entity).insert((
             Mesh2d(meshes.add(RegularPolygon::new(HEX_SIZE * 0.95, 6))),
-            MeshMaterial2d(hex_materials.default.clone()),
+            MeshMaterial2d(base),
             Transform::from_xyz(pixel.x, pixel.y, 0.0)
                 .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_6)),
         ));

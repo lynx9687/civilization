@@ -7,12 +7,6 @@ use shared::{
     units::{ColorIndex, Health},
 };
 
-pub const DEFAULT_TILE_RESOURCES: TileResources = TileResources {
-    food: 2,
-    production: 1,
-    gold: 1,
-};
-
 pub const STARTING_POPULATION: u32 = 1;
 pub const STARTING_BORDER_RANGE: i32 = 1;
 pub const MAX_BORDER_RANGE: i32 = 3;

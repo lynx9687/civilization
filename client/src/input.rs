@@ -7,6 +7,7 @@ use shared::{
     components::*,
     events::*,
     hex::{HexPosition, pixel_to_hex},
+    terrain::Terrain,
     tiles::TileOwner,
     units::*,
 };
@@ -88,6 +89,7 @@ type TileHighlightQuery<'w, 's> = Query<
     (
         &'static HexPosition,
         Option<&'static TileOwner>,
+        Option<&'static Terrain>,
         &'static mut MeshMaterial2d<ColorMaterial>,
     ),
     With<HexTile>,
@@ -185,7 +187,7 @@ pub fn update_hex_highlights(
         }
     };
 
-    for (pos, owner, mut material) in &mut tiles {
+    for (pos, owner, terrain, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
             *material = MeshMaterial2d(hex_materials.hovered.clone());
         } else if attack_targets.contains(pos) {
@@ -199,7 +201,11 @@ pub fn update_hex_highlights(
             *material =
                 MeshMaterial2d(hex_materials.claimed[owning_player.color_index as usize].clone());
         } else {
-            *material = MeshMaterial2d(hex_materials.default.clone());
+            // Unhighlighted tiles repaint to their terrain's base material.
+            let base = terrain
+                .map(|t| hex_materials.terrain_material(*t))
+                .unwrap_or_else(|| hex_materials.default.clone());
+            *material = MeshMaterial2d(base);
         }
     }
 }
