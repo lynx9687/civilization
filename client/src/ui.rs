@@ -285,7 +285,7 @@ pub fn update_turn_ui(
 }
 
 pub fn update_city_ui(
-    controller: Res<Controller>,
+    ui_state: Res<UiState>,
     cities: Query<(&City, &CityOwner, &CityStats, Option<&CityProduction>)>,
     players: Query<&Player>,
     units: Res<UnitRegistry>,
@@ -295,7 +295,7 @@ pub fn update_city_ui(
         return;
     };
 
-    let Some(city_entity) = controller.selected_city else {
+    let UiState::CitySelected { city: city_entity } = *ui_state else {
         **text = "No city selected".to_string();
         return;
     };
@@ -420,11 +420,12 @@ pub fn update_production_bar(
         return;
     }
 
-    let show = !ui_state.is_game_finished()
-        && controller
-            .selected_city
-            .and_then(|city| cities.get(city).ok())
-            .is_some_and(|owner| Some(owner.entity) == controller.player_entity);
+    let show = match *ui_state {
+        UiState::CitySelected { city } => cities
+            .get(city)
+            .is_ok_and(|owner| Some(owner.entity) == controller.player_entity),
+        _ => false,
+    };
 
     for mut node in &mut bars {
         node.display = if show { Display::Flex } else { Display::None };
@@ -451,7 +452,7 @@ pub fn update_action_bar(
         }
         UiState::UnitSelected { unit } => unit,
         UiState::Targeting { unit, .. } => unit,
-        UiState::GameFinished { .. } => {
+        UiState::CitySelected { .. } | UiState::GameFinished { .. } => {
             for mut node in &mut bars {
                 node.display = Display::None;
             }
@@ -523,7 +524,7 @@ pub fn handle_verb_button_click(
     let unit_entity = match *ui_state {
         UiState::UnitSelected { unit } => unit,
         UiState::Targeting { unit, .. } => unit,
-        UiState::Idle => return,
+        UiState::Idle | UiState::CitySelected { .. } => return,
         UiState::GameFinished { .. } => return,
     };
 
@@ -598,7 +599,6 @@ pub fn handle_production_button_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     buttons: Query<&ProductionButton>,
-    controller: Res<Controller>,
     ui_state: Res<UiState>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
@@ -609,7 +609,7 @@ pub fn handle_production_button_click(
     let Ok(button) = buttons.get(click.entity) else {
         return;
     };
-    let Some(city) = controller.selected_city else {
+    let UiState::CitySelected { city } = *ui_state else {
         return;
     };
     let Ok(state) = turn_state.single() else {

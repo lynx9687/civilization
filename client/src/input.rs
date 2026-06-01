@@ -26,7 +26,6 @@ pub struct HoveredHex(Option<HexPosition>);
 #[derive(Resource, Default)]
 pub struct Controller {
     pub player_entity: Option<Entity>,
-    pub selected_city: Option<Entity>,
 }
 
 pub fn local_player_defeated(
@@ -71,6 +70,9 @@ pub enum UiState {
     UnitSelected {
         unit: Entity,
     },
+    CitySelected {
+        city: Entity,
+    },
     Targeting {
         unit: Entity,
         verb: TargetableVerb,
@@ -93,7 +95,7 @@ pub enum TargetableVerb {
 }
 
 pub fn sync_game_finished_ui_state(
-    mut controller: ResMut<Controller>,
+    controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut ui_state: ResMut<UiState>,
@@ -110,7 +112,6 @@ pub fn sync_game_finished_ui_state(
         return;
     };
 
-    controller.selected_city = None;
     let game_finished = UiState::GameFinished { outcome };
     if *ui_state != game_finished {
         *ui_state = game_finished;
@@ -245,7 +246,7 @@ pub fn handle_left_click(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
+    controller: Res<Controller>,
     mut ui_state: ResMut<UiState>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     cities: Query<(&HexPosition, &CityOwner), With<City>>,
@@ -255,7 +256,6 @@ pub fn handle_left_click(
         return;
     }
     if ui_state.is_game_finished() {
-        controller.selected_city = None;
         return;
     }
     let Ok(state) = turn_state.single() else {
@@ -286,15 +286,15 @@ pub fn handle_left_click(
     };
 
     match *ui_state {
-        UiState::Idle => {
+        UiState::Idle | UiState::CitySelected { .. } => {
             if let Some(entity) = owned_unit_at(target) {
-                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
+            } else {
+                *ui_state = UiState::Idle;
             }
         }
         UiState::UnitSelected { unit: _ } => {
             if let Some(entity) = owned_unit_at(target) {
-                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
             } else {
                 *ui_state = UiState::Idle;
@@ -303,7 +303,6 @@ pub fn handle_left_click(
         UiState::Targeting { unit, verb } => {
             // clicking another owned unit always switches selection
             if let Some(entity) = owned_unit_at(target) {
-                controller.selected_city = None;
                 *ui_state = UiState::UnitSelected { unit: entity };
                 return;
             }
@@ -363,7 +362,6 @@ pub fn handle_right_click(
     cursor: CursorWorld,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    mut controller: ResMut<Controller>,
     mut ui_state: ResMut<UiState>,
     cities: Query<(Entity, &HexPosition), With<City>>,
 ) {
@@ -371,7 +369,6 @@ pub fn handle_right_click(
         return;
     }
     if ui_state.is_game_finished() {
-        controller.selected_city = None;
         return;
     }
     let Ok(state) = turn_state.single() else {
@@ -391,9 +388,7 @@ pub fn handle_right_click(
     // handle clicking city
     for (city_entity, pos) in cities {
         if *pos == target {
-            // controller.selected_unit = None;
-            *ui_state = UiState::Idle;
-            controller.selected_city = Some(city_entity);
+            *ui_state = UiState::CitySelected { city: city_entity };
             println!("Selected city {city_entity}");
             return;
         }
@@ -411,15 +406,21 @@ pub fn handle_escape_key(keys: Res<ButtonInput<KeyCode>>, mut ui_state: ResMut<U
     };
 }
 
-// drops UiState back to Idle if the unit it references no longer exists
-pub fn prune_stale_selection(mut ui_state: ResMut<UiState>, units: Query<(), With<Unit>>) {
-    let referenced = match *ui_state {
+// drops UiState back to Idle if the entity it references no longer exists
+pub fn prune_stale_selection(
+    mut ui_state: ResMut<UiState>,
+    units: Query<(), With<Unit>>,
+    cities: Query<(), With<City>>,
+) {
+    let stale = match *ui_state {
         UiState::Idle => return,
-        UiState::UnitSelected { unit } => unit,
-        UiState::Targeting { unit, .. } => unit,
+        UiState::UnitSelected { unit } | UiState::Targeting { unit, .. } => {
+            units.get(unit).is_err()
+        }
+        UiState::CitySelected { city } => cities.get(city).is_err(),
         UiState::GameFinished { .. } => return,
     };
-    if units.get(referenced).is_err() {
+    if stale {
         *ui_state = UiState::Idle;
     }
 }
