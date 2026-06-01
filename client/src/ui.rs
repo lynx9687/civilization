@@ -7,10 +7,7 @@ use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, R
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
-use crate::input::{
-    Controller, LastSubmittedTurn, TargetableVerb, UiState, local_player_defeated,
-    local_player_game_over, local_player_victorious,
-};
+use crate::input::{Controller, GameOutcome, LastSubmittedTurn, TargetableVerb, UiState};
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -218,7 +215,6 @@ pub fn spawn_turn_ui(mut commands: Commands) {
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn finish_turn_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
@@ -226,11 +222,8 @@ pub fn finish_turn_clicked(
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
     mut ui_state: ResMut<UiState>,
-    controller: Res<Controller>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
-    if local_player_game_over(&controller, &defeated, &victorious) {
+    if ui_state.is_game_finished() {
         return;
     }
     let Ok(state) = turn_state.single() else {
@@ -247,8 +240,7 @@ pub fn update_turn_ui(
     turn_state: Query<&TurnState>,
     controller: Res<Controller>,
     last_submitted: Res<LastSubmittedTurn>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
+    ui_state: Res<UiState>,
     mut ui_text: Query<&mut Text, With<TurnUiText>>,
 ) {
     let Ok(mut text) = ui_text.single_mut() else {
@@ -259,12 +251,12 @@ pub fn update_turn_ui(
         **text = "Connecting...".to_string();
         return;
     }
-    if local_player_defeated(&controller, &defeated) {
-        **text = "You lost".to_string();
-        return;
-    }
-    if local_player_victorious(&controller, &victorious) {
-        **text = "You won".to_string();
+    if let UiState::GameFinished { outcome } = *ui_state {
+        **text = match outcome {
+            GameOutcome::Won => "You won",
+            GameOutcome::Lost => "You lost",
+        }
+        .to_string();
         return;
     }
 
@@ -420,16 +412,15 @@ fn format_recipe_progress(
 
 pub fn update_production_bar(
     controller: Res<Controller>,
+    ui_state: Res<UiState>,
     cities: Query<&CityOwner, With<City>>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
     mut bars: Query<&mut Node, With<ProductionBar>>,
 ) {
-    if !controller.is_changed() && defeated.is_empty() && victorious.is_empty() {
+    if !controller.is_changed() && !ui_state.is_changed() {
         return;
     }
 
-    let show = !local_player_game_over(&controller, &defeated, &victorious)
+    let show = !ui_state.is_game_finished()
         && controller
             .selected_city
             .and_then(|city| cities.get(city).ok())
@@ -441,24 +432,14 @@ pub fn update_production_bar(
 }
 
 // reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
-#[allow(clippy::too_many_arguments)]
 pub fn update_action_bar(
     ui_state: Res<UiState>,
     mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
     mut buttons: Query<(&VerbButton, &mut BackgroundColor)>,
     units: Query<&Unit>,
     registry: Res<UnitRegistry>,
-    controller: Res<Controller>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
-    if !ui_state.is_changed() && defeated.is_empty() && victorious.is_empty() {
-        return;
-    }
-    if local_player_game_over(&controller, &defeated, &victorious) {
-        for mut node in &mut bars {
-            node.display = Display::None;
-        }
+    if !ui_state.is_changed() {
         return;
     }
     let unit_entity = match *ui_state {
@@ -470,6 +451,12 @@ pub fn update_action_bar(
         }
         UiState::UnitSelected { unit } => unit,
         UiState::Targeting { unit, .. } => unit,
+        UiState::GameFinished { .. } => {
+            for mut node in &mut bars {
+                node.display = Display::None;
+            }
+            return;
+        }
     };
 
     for mut node in &mut bars {
@@ -514,12 +501,8 @@ pub fn handle_verb_button_click(
     registry: Res<UnitRegistry>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    controller: Res<Controller>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
-    if local_player_game_over(&controller, &defeated, &victorious) {
-        *ui_state = UiState::Idle;
+    if ui_state.is_game_finished() {
         return;
     }
     let Ok(VerbButton(verb)) = buttons.get(click.entity) else {
@@ -541,6 +524,7 @@ pub fn handle_verb_button_click(
         UiState::UnitSelected { unit } => unit,
         UiState::Targeting { unit, .. } => unit,
         UiState::Idle => return,
+        UiState::GameFinished { .. } => return,
     };
 
     let Ok(unit) = units.get(unit_entity) else {
@@ -610,18 +594,16 @@ pub fn handle_verb_button_click(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn handle_production_button_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     buttons: Query<&ProductionButton>,
     controller: Res<Controller>,
+    ui_state: Res<UiState>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
-    if local_player_game_over(&controller, &defeated, &victorious) {
+    if ui_state.is_game_finished() {
         return;
     }
     let Ok(button) = buttons.get(click.entity) else {
@@ -648,22 +630,27 @@ pub fn handle_production_button_click(
 }
 
 pub fn update_lose_screen(
-    controller: Res<Controller>,
-    defeated: Query<(), With<DefeatedPlayer>>,
-    victorious: Query<(), With<VictoriousPlayer>>,
-    mut screens: Query<&mut Node, With<LoseScreen>>,
+    ui_state: Res<UiState>,
+    mut lose_screens: Query<&mut Node, With<LoseScreen>>,
     mut victory_screens: Query<&mut Node, (With<VictoryScreen>, Without<LoseScreen>)>,
-    mut ui_state: ResMut<UiState>,
 ) {
-    let lost = local_player_defeated(&controller, &defeated);
-    let won = local_player_victorious(&controller, &victorious);
-    if lost || won {
-        *ui_state = UiState::Idle;
-    }
-    for mut node in &mut screens {
-        node.display = if lost { Display::Flex } else { Display::None };
+    let outcome = match *ui_state {
+        UiState::GameFinished { outcome } => Some(outcome),
+        _ => None,
+    };
+
+    for mut node in &mut lose_screens {
+        node.display = if outcome == Some(GameOutcome::Lost) {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
     for mut node in &mut victory_screens {
-        node.display = if won { Display::Flex } else { Display::None };
+        node.display = if outcome == Some(GameOutcome::Won) {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
 }

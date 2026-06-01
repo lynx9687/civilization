@@ -86,6 +86,7 @@ fn main() {
                     update_unit_health_bars,
                     update_city_health_bars,
                 ),
+                sync_game_finished_ui_state,
                 (
                     move_camera_with_keyboard,
                     zoom_camera_with_scroll,
@@ -105,7 +106,8 @@ fn main() {
                     update_lobby_ui,
                     update_lose_screen,
                 ),
-            ),
+            )
+                .chain(),
         )
         .run();
 }
