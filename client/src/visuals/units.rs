@@ -21,10 +21,16 @@ const HEALTH_BAR_FONT_SIZE: f32 = 10.0;
 #[require(Transform, Visibility)]
 pub(crate) struct UnitVisual {
     sprite_root: Entity,
+    team_mask: Entity,
 }
 
 #[derive(Component)]
 pub(crate) struct UnitSpriteRoot;
+
+/// Marks the team-colour mask sprite that is a child of `UnitSpriteRoot`.
+/// Stored separately so `update_unit_colors` can reach it without walking the hierarchy.
+#[derive(Component)]
+pub(crate) struct UnitTeamMask;
 
 #[derive(Component)]
 pub(crate) struct UnitHealthBar {
@@ -64,6 +70,7 @@ pub fn spawn_unit_visuals(
 
         println!("Adding unit: {entity} (type {name}) at pixel {pixel}");
         let mut sprite_root = None;
+        let mut team_mask = None;
         let mut health_bar_fill = None;
         let mut health_bar_text = None;
 
@@ -82,10 +89,15 @@ pub fn spawn_unit_visuals(
                 sprite_root = Some(unit_sprite_root.id());
 
                 unit_sprite_root.with_children(|sprite| {
-                    sprite.spawn((
-                        unit_sprite(asset_server.load(team_mask_texture), color),
-                        Transform::from_xyz(0.0, 0.0, 0.1),
-                    ));
+                    team_mask = Some(
+                        sprite
+                            .spawn((
+                                UnitTeamMask,
+                                unit_sprite(asset_server.load(team_mask_texture), color),
+                                Transform::from_xyz(0.0, 0.0, 0.1),
+                            ))
+                            .id(),
+                    );
                 });
 
                 let mut health_bar = parent.spawn((
@@ -132,6 +144,7 @@ pub fn spawn_unit_visuals(
         commands.entity(entity).insert((
             UnitVisual {
                 sprite_root: sprite_root.expect("unit sprite root should be spawned"),
+                team_mask: team_mask.expect("unit team mask should be spawned"),
             },
             UnitHealthBar {
                 fill: health_bar_fill.expect("health bar fill should be spawned"),
@@ -228,6 +241,21 @@ fn unit_sprite(image: Handle<Image>, color: Color) -> Sprite {
         color,
         custom_size: Some(Vec2::splat(UNIT_SPRITE_SIZE)),
         ..default()
+    }
+}
+
+/// Repaints team-mask sprites whenever the server replicates a new `ColorIndex`
+/// (e.g. after lobby slot reindexing).  `spawn_unit_visuals` only runs once for
+/// `Added<Unit>`, so without this system colors would be frozen at join time.
+#[allow(clippy::type_complexity)]
+pub fn update_unit_colors(
+    units: Query<(&ColorIndex, &UnitVisual), (With<Unit>, Changed<ColorIndex>)>,
+    mut masks: Query<&mut Sprite, With<UnitTeamMask>>,
+) {
+    for (color_index, visual) in &units {
+        if let Ok(mut sprite) = masks.get_mut(visual.team_mask) {
+            sprite.color = player_color(color_index.0);
+        }
     }
 }
 

@@ -2,15 +2,16 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use shared::cities::City;
+use shared::cities::{City, CityOwner};
+use shared::events::StartGame;
 use shared::events::*;
 use shared::unit_definition::{UnitRegistry, is_within_move_range};
 use shared::unit_definition::{available_verbs, is_within_attack_range};
 use shared::units::*;
 use shared::{components::*, hex::HexPosition};
 
-use crate::GRID_RADIUS;
 use crate::cities::spawn_city_at_tile;
+use crate::map_gen::MapTiles;
 use crate::players::PlayerMap;
 
 const MIN_CITY_CENTER_DISTANCE: i32 = 4;
@@ -30,34 +31,125 @@ pub struct PlayerState {
     pub finished_cnt: i32,
 }
 
-pub fn update_turn_phase(players: Query<(), With<Player>>, mut turn_state: Query<&mut TurnState>) {
+pub fn update_turn_phase(
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    mut turn_state: Query<&mut TurnState>,
+) {
     let count = players.iter().count();
     let Ok(mut state) = turn_state.single_mut() else {
         return;
     };
 
-    if count < 2 {
-        if state.phase != TurnPhase::WaitingForPlayers {
-            state.phase = TurnPhase::WaitingForPlayers;
-            println!("Not enough players ({count}), waiting...");
+    match state.phase {
+        TurnPhase::Lobby => {
+            // No auto-advance; host must send StartGame.
         }
-    } else if state.phase == TurnPhase::WaitingForPlayers {
-        state.phase = TurnPhase::Accepting;
-        println!(
-            "Enough players ({count}), accepting moves for turn {}",
-            state.turn_number
-        );
+        TurnPhase::WaitingForPlayers => {
+            if count == 0 {
+                // All players gone — reset for the next session.
+                state.phase = TurnPhase::Lobby;
+                state.turn_number = 0;
+                println!("All players disconnected, server reset to Lobby");
+            } else if count >= 2 {
+                state.phase = TurnPhase::Accepting;
+                println!(
+                    "Enough players ({count}), resuming turn {}",
+                    state.turn_number
+                );
+            }
+        }
+        TurnPhase::Accepting => {
+            if count == 0 {
+                // Fast-path: both players disconnected in the same frame.
+                state.phase = TurnPhase::Lobby;
+                state.turn_number = 0;
+                println!("All players disconnected, server reset to Lobby");
+            } else if count < 2 {
+                state.phase = TurnPhase::WaitingForPlayers;
+                println!("Not enough players ({count}), waiting...");
+            }
+        }
     }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn handle_start_game(
+    trigger: On<FromClient<StartGame>>,
+    player_map: Res<PlayerMap>,
+    hosts: Query<(), With<Host>>,
+    players: Query<
+        (),
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+        ),
+    >,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
+    mut turn_state: Query<&mut TurnState>,
+) {
+    let Ok(mut state) = turn_state.single_mut() else {
+        return;
+    };
+    if state.phase != TurnPhase::Lobby {
+        return;
+    }
+
+    let client_entity = match trigger.client_id {
+        ClientId::Client(e) => e,
+        ClientId::Server => return,
+    };
+    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+
+    if !hosts.contains(player_entity) {
+        println!("Rejected StartGame: sender is not the host");
+        return;
+    }
+    if defeated.contains(player_entity) {
+        println!("Rejected StartGame: sender is defeated");
+        return;
+    }
+    if victorious.contains(player_entity) {
+        println!("Rejected StartGame: sender is victorious");
+        return;
+    }
+    let count = players.iter().count();
+    if count < 2 {
+        println!("Rejected StartGame: need >= 2 players, have {count}");
+        return;
+    }
+
+    state.phase = TurnPhase::Accepting;
+    println!(
+        "Game started by host. Accepting moves for turn {}",
+        state.turn_number
+    );
 }
 
 pub fn handle_finish_turn(
     trigger: On<FromClient<FinishTurn>>,
     mut player_state: ResMut<PlayerState>,
+    player_map: Res<PlayerMap>,
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let client_entity = match trigger.client_id {
         ClientId::Client(entity) => entity,
         ClientId::Server => return,
     };
+    // Ignore FinishTurn from waiting-room clients (not active game participants).
+    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+    if !players.contains(player_entity) {
+        return;
+    }
+    if victorious.contains(player_entity) {
+        return;
+    }
     let prev_state = player_state
         .turn
         .insert(client_entity, PlayerTurnState::Finished);
@@ -87,9 +179,15 @@ pub fn handle_unit_action(
     player_map: Res<PlayerMap>,
     units: Query<(&HexPosition, &Owner, &Unit)>,
     enemy_units: Query<(&HexPosition, &Owner), With<Unit>>,
+    cities: Query<(&HexPosition, &CityOwner), With<City>>,
     queued_moves: Query<(Entity, &MoveTo, &Owner), With<Unit>>, // for same-turn collision detection
     turn_state: Query<&TurnState>,
     registry: Res<UnitRegistry>,
+    // Optional so the observer's unit tests (which insert no map) skip the bounds
+    // check; in the running server MapTiles is always present and populated.
+    map_tiles: Option<Res<MapTiles>>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     // common-path validation
     let Ok(state) = turn_state.single() else {
@@ -106,6 +204,12 @@ pub fn handle_unit_action(
     let Some(player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
+    if defeated.contains(*player_entity) {
+        return;
+    }
+    if victorious.contains(*player_entity) {
+        return;
+    }
 
     let entity = trigger.message.unit;
     let Ok((pos, owner, unit)) = units.get(entity) else {
@@ -134,9 +238,22 @@ pub fn handle_unit_action(
                 println!("Rejected move: out of range");
                 return;
             }
-            if !target.in_bounds(GRID_RADIUS) {
-                println!("Rejected move: out of bounds");
-                return;
+            // Reject moves off the map or onto impassable terrain (water/mountain).
+            // Per-terrain movement *cost* is layered on top of this by later work;
+            // this guard is what makes the generator's connected-landmass guarantee
+            // meaningful. Optional so the observer's unit tests can omit the map.
+            if let Some(map_tiles) = &map_tiles {
+                match map_tiles.0.get(target) {
+                    None => {
+                        println!("Rejected move: target tile not on map");
+                        return;
+                    }
+                    Some(terrain) if !terrain.is_passable() => {
+                        println!("Rejected move: target terrain is impassable");
+                        return;
+                    }
+                    Some(_) => {}
+                }
             }
             // Reject if a friendly is currently standing on the target tile.
             if units
@@ -144,6 +261,13 @@ pub fn handle_unit_action(
                 .any(|(p, o, _)| p == target && o.0 == *player_entity)
             {
                 println!("Rejected move: friendly already on tile");
+                return;
+            }
+            if let Some((_, city_owner)) = cities.iter().find(|(p, _)| *p == target)
+                && city_owner.entity != *player_entity
+                && def.attack_range != 1
+            {
+                println!("Rejected move: only melee units can attack cities by moving");
                 return;
             }
             // Reject if another friendly already queued a Move to the same tile this turn.
@@ -166,7 +290,10 @@ pub fn handle_unit_action(
             }
             let enemy_here = enemy_units
                 .iter()
-                .any(|(p, o)| p == target && o.0 != *player_entity);
+                .any(|(p, o)| p == target && o.0 != *player_entity)
+                || cities
+                    .iter()
+                    .any(|(p, owner)| p == target && owner.entity != *player_entity);
             if !enemy_here {
                 println!("Rejected attack: no enemy at target");
                 return;
@@ -248,6 +375,81 @@ pub fn resolve_builds(
     }
 }
 
+#[allow(clippy::type_complexity)]
+pub fn eliminate_defeated_players(
+    players: Query<
+        Entity,
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+        ),
+    >,
+    cities: Query<&CityOwner, With<City>>,
+    units: Query<(Entity, &Owner, &Unit)>,
+    registry: Res<UnitRegistry>,
+    player_map: Res<PlayerMap>,
+    mut player_state: ResMut<PlayerState>,
+    mut commands: Commands,
+) {
+    let mut survivors = Vec::new();
+
+    for player_entity in &players {
+        let controls_city = cities.iter().any(|owner| owner.entity == player_entity);
+        let has_settler = units.iter().any(|(_, owner, unit)| {
+            owner.0 == player_entity
+                && registry
+                    .get(&unit.type_id)
+                    .is_some_and(|def| def.build_targets.iter().any(|target| target == "city"))
+        });
+        if controls_city || has_settler {
+            survivors.push(player_entity);
+            continue;
+        }
+
+        println!("Player {player_entity} defeated: no cities and no settlers");
+        commands.entity(player_entity).insert(DefeatedPlayer);
+
+        for (unit_entity, owner, _) in &units {
+            if owner.0 == player_entity {
+                commands.entity(unit_entity).despawn();
+            }
+        }
+
+        for (&client_entity, &mapped_player) in &player_map.client_to_player {
+            if mapped_player != player_entity {
+                continue;
+            }
+            if player_state
+                .turn
+                .remove(&client_entity)
+                .is_some_and(|state| state == PlayerTurnState::Finished)
+            {
+                player_state.finished_cnt -= 1;
+            }
+        }
+    }
+
+    if survivors.len() == 1 {
+        let winner = survivors[0];
+        println!("Player {winner} won: last surviving player");
+        commands.entity(winner).insert(VictoriousPlayer);
+
+        for (&client_entity, &mapped_player) in &player_map.client_to_player {
+            if mapped_player != winner {
+                continue;
+            }
+            if player_state
+                .turn
+                .remove(&client_entity)
+                .is_some_and(|state| state == PlayerTurnState::Finished)
+            {
+                player_state.finished_cnt -= 1;
+            }
+        }
+    }
+}
+
 pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: ResMut<PlayerState>) {
     let Ok(mut state) = turn_state.single_mut() else {
         return;
@@ -265,7 +467,7 @@ pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: Res
 pub fn turn_is_resolving(
     turn_state: Query<&TurnState>,
     player_state: Res<PlayerState>,
-    players: Query<(), With<Player>>,
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
 ) -> bool {
     let Ok(state) = turn_state.single() else {
         return false;
@@ -284,7 +486,7 @@ mod tests {
     use bevy::app::ScheduleRunnerPlugin;
     use bevy::state::app::StatesPlugin;
     use bevy_replicon::prelude::*;
-    use shared::cities::City;
+    use shared::cities::{City, CityOwner};
     use shared::components::*;
     use shared::events::*;
     use shared::unit_definition::*;
@@ -929,6 +1131,511 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_unit_action_rejects_move_onto_impassable_terrain() {
+        use crate::map_gen::MapTiles;
+        use shared::terrain::Terrain;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let warrior_type = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+
+        // (1,0) is impassable water, (2,0) is passable land; both within budget 2.
+        let mut map = HashMap::new();
+        map.insert(HexPosition::new(0, 0), Terrain::Grassland);
+        map.insert(HexPosition::new(1, 0), Terrain::Water);
+        map.insert(HexPosition::new(2, 0), Terrain::Grassland);
+        app.insert_resource(MapTiles(map));
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            (client, unit)
+        };
+
+        // Move onto water must be rejected (impassable terrain).
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_none(),
+            "move onto impassable water must be rejected"
+        );
+
+        // Move onto passable land within range must be accepted.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(2, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "move onto passable land within range must be accepted"
+        );
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_friendly_city_targets() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let archer_type = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_type);
+        registry.definitions.insert(archer_type, archer_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: archer_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            world.spawn((City, HexPosition::new(1, 0), CityOwner { entity: player }));
+            (client, unit)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "moving into a friendly city must be allowed"
+        );
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Attack {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "rejected attack must preserve the queued friendly-city move"
+        );
+        assert!(
+            app.world().get::<AttackTarget>(unit).is_none(),
+            "attacking a friendly city must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_handle_unit_action_rejects_ranged_move_to_enemy_city() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let archer_type = UnitTypeId(0);
+        let archer_def = UnitDefinition {
+            hp: 8,
+            move_budget: 2,
+            attack_range: 2,
+            attack_damage: 3,
+            gold_upkeep: 1,
+            production_cost: 25,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("archer".into(), archer_type);
+        registry.definitions.insert(archer_type, archer_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let enemy = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: archer_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            world.spawn((City, HexPosition::new(1, 0), CityOwner { entity: enemy }));
+            (client, unit)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+
+        assert!(
+            app.world().get::<MoveTo>(unit).is_none(),
+            "ranged units must not capture cities by moving into them"
+        );
+    }
+
+    #[test]
+    fn eliminate_defeated_players_marks_player_and_despawns_units() {
+        let mut app = App::new();
+        app.add_systems(Update, eliminate_defeated_players);
+
+        let warrior_type = UnitTypeId(0);
+        let mut registry = UnitRegistry::default();
+        registry.definitions.insert(
+            warrior_type,
+            UnitDefinition {
+                hp: 10,
+                move_budget: 2,
+                attack_range: 1,
+                attack_damage: 4,
+                gold_upkeep: 1,
+                production_cost: 20,
+                build_targets: vec![],
+                terrain_cost: HashMap::new(),
+            },
+        );
+        app.insert_resource(registry);
+        app.init_resource::<PlayerMap>();
+        app.init_resource::<PlayerState>();
+
+        let (player, unit, client) = {
+            let world = app.world_mut();
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            world
+                .resource_mut::<PlayerState>()
+                .turn
+                .insert(client, PlayerTurnState::Finished);
+            world.resource_mut::<PlayerState>().finished_cnt = 1;
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_type,
+                    },
+                    Owner(player),
+                ))
+                .id();
+            (player, unit, client)
+        };
+
+        app.update();
+
+        assert!(app.world().get::<DefeatedPlayer>(player).is_some());
+        assert!(!app.world().entities().contains(unit));
+        assert!(
+            !app.world()
+                .resource::<PlayerState>()
+                .turn
+                .contains_key(&client)
+        );
+        assert_eq!(app.world().resource::<PlayerState>().finished_cnt, 0);
+    }
+
+    #[test]
+    fn eliminate_defeated_players_keeps_players_with_city_or_settler() {
+        let mut app = App::new();
+        app.add_systems(Update, eliminate_defeated_players);
+
+        let settler_type = UnitTypeId(0);
+        let warrior_type = UnitTypeId(1);
+        let mut registry = UnitRegistry::default();
+        registry.definitions.insert(
+            settler_type,
+            UnitDefinition {
+                hp: 5,
+                move_budget: 2,
+                attack_range: 0,
+                attack_damage: 0,
+                gold_upkeep: 0,
+                production_cost: 40,
+                build_targets: vec!["city".to_string()],
+                terrain_cost: HashMap::new(),
+            },
+        );
+        registry.definitions.insert(
+            warrior_type,
+            UnitDefinition {
+                hp: 10,
+                move_budget: 2,
+                attack_range: 1,
+                attack_damage: 4,
+                gold_upkeep: 1,
+                production_cost: 20,
+                build_targets: vec![],
+                terrain_cost: HashMap::new(),
+            },
+        );
+        app.insert_resource(registry);
+        app.init_resource::<PlayerMap>();
+        app.init_resource::<PlayerState>();
+
+        let (settler_player, city_player) = {
+            let world = app.world_mut();
+            let settler_player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let city_player = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            world.spawn((
+                Unit {
+                    type_id: settler_type,
+                },
+                Owner(settler_player),
+            ));
+            world.spawn((
+                Unit {
+                    type_id: warrior_type,
+                },
+                Owner(city_player),
+            ));
+            world.spawn((
+                City,
+                CityOwner {
+                    entity: city_player,
+                },
+            ));
+            (settler_player, city_player)
+        };
+
+        app.update();
+
+        assert!(app.world().get::<DefeatedPlayer>(settler_player).is_none());
+        assert!(app.world().get::<DefeatedPlayer>(city_player).is_none());
+        assert!(
+            app.world()
+                .get::<VictoriousPlayer>(settler_player)
+                .is_none()
+        );
+        assert!(app.world().get::<VictoriousPlayer>(city_player).is_none());
+    }
+
+    #[test]
+    fn eliminate_defeated_players_marks_last_survivor_victorious() {
+        let mut app = App::new();
+        app.add_systems(Update, eliminate_defeated_players);
+
+        let warrior_type = UnitTypeId(0);
+        let mut registry = UnitRegistry::default();
+        registry.definitions.insert(
+            warrior_type,
+            UnitDefinition {
+                hp: 10,
+                move_budget: 2,
+                attack_range: 1,
+                attack_damage: 4,
+                gold_upkeep: 1,
+                production_cost: 20,
+                build_targets: vec![],
+                terrain_cost: HashMap::new(),
+            },
+        );
+        app.insert_resource(registry);
+        app.init_resource::<PlayerMap>();
+        app.init_resource::<PlayerState>();
+
+        let (winner, loser, winner_client) = {
+            let world = app.world_mut();
+            let winner = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let loser = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let winner_client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(winner_client, winner);
+            world
+                .resource_mut::<PlayerState>()
+                .turn
+                .insert(winner_client, PlayerTurnState::Finished);
+            world.resource_mut::<PlayerState>().finished_cnt = 1;
+            world.spawn((City, CityOwner { entity: winner }));
+            world.spawn((
+                Unit {
+                    type_id: warrior_type,
+                },
+                Owner(loser),
+            ));
+            (winner, loser, winner_client)
+        };
+
+        app.update();
+
+        assert!(app.world().get::<VictoriousPlayer>(winner).is_some());
+        assert!(app.world().get::<DefeatedPlayer>(loser).is_some());
+        assert!(
+            !app.world()
+                .resource::<PlayerState>()
+                .turn
+                .contains_key(&winner_client)
+        );
+        assert_eq!(app.world().resource::<PlayerState>().finished_cnt, 0);
+    }
+
+    #[test]
     fn test_handle_unit_action_rejects_move_to_tile_with_queued_friendly_move() {
         use crate::players::PlayerMap;
         use bevy::app::ScheduleRunnerPlugin;
@@ -1040,6 +1747,174 @@ mod tests {
         assert!(
             app.world().get::<MoveTo>(second).is_none(),
             "Second friendly's Move to a tile already targeted must be rejected"
+        );
+    }
+
+    #[test]
+    fn update_turn_phase_resets_to_lobby_when_all_players_leave() {
+        let mut app = App::new();
+        app.add_systems(Update, update_turn_phase);
+        app.world_mut().spawn(TurnState {
+            phase: TurnPhase::WaitingForPlayers,
+            turn_number: 3,
+        });
+        // No Player entities — simulates all-disconnected state.
+        app.update();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(state.phase, TurnPhase::Lobby, "phase must reset to Lobby");
+        assert_eq!(state.turn_number, 0, "turn_number must reset to 0");
+    }
+
+    fn lobby_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+        app.init_resource::<PlayerMap>();
+        app.add_observer(handle_start_game);
+        app.update();
+        app
+    }
+
+    #[test]
+    fn handle_start_game_host_with_two_players_transitions_to_accepting() {
+        let mut app = lobby_app();
+
+        let (client, _player) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Lobby,
+                turn_number: 0,
+            });
+            let player1 = world
+                .spawn((
+                    Player {
+                        color_index: 0,
+                        gold: 0,
+                    },
+                    Host,
+                ))
+                .id();
+            let _player2 = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player1);
+            (client, player1)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: StartGame,
+        });
+        app.world_mut().flush();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Accepting,
+            "host StartGame with 2 players must transition to Accepting"
+        );
+    }
+
+    #[test]
+    fn handle_start_game_rejects_non_host_sender() {
+        let mut app = lobby_app();
+
+        let (non_host_client, _host_player, _non_host_player) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Lobby,
+                turn_number: 0,
+            });
+            let host_player = world
+                .spawn((
+                    Player {
+                        color_index: 0,
+                        gold: 0,
+                    },
+                    Host,
+                ))
+                .id();
+            let non_host_player = world
+                .spawn(Player {
+                    color_index: 1,
+                    gold: 0,
+                })
+                .id();
+            let non_host_client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(non_host_client, non_host_player);
+            (non_host_client, host_player, non_host_player)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(non_host_client),
+            message: StartGame,
+        });
+        app.world_mut().flush();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Lobby,
+            "non-host StartGame must be rejected; phase must remain Lobby"
+        );
+    }
+
+    #[test]
+    fn handle_start_game_rejects_when_only_one_player() {
+        let mut app = lobby_app();
+
+        let (client, _player) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Lobby,
+                turn_number: 0,
+            });
+            let player = world
+                .spawn((
+                    Player {
+                        color_index: 0,
+                        gold: 0,
+                    },
+                    Host,
+                ))
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            (client, player)
+        };
+
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: StartGame,
+        });
+        app.world_mut().flush();
+
+        let mut q = app.world_mut().query::<&TurnState>();
+        let state = q.single(app.world()).unwrap();
+        assert_eq!(
+            state.phase,
+            TurnPhase::Lobby,
+            "StartGame with only 1 player must be rejected"
         );
     }
 }

@@ -2,7 +2,7 @@ use bevy::prelude::Entity;
 use shared::hex::HexPosition;
 use std::collections::{HashMap, HashSet};
 
-use super::types::{CombatDeltas, ResolveAction, UnitSnapshot};
+use super::types::{CityCapture, CitySnapshot, CombatDeltas, ResolveAction, UnitSnapshot};
 
 /// Pure combat resolver. Borrows snapshots so the wrapper can keep the Vec
 /// around for logging without cloning.
@@ -15,7 +15,11 @@ use super::types::{CombatDeltas, ResolveAction, UnitSnapshot};
 /// Iteration stops when no conflict remains. Termination is guaranteed by
 /// `start_pos` uniqueness (enforced by handle_unit_action's friendly-stack
 /// checks); the 256-iteration cap is a sanity guard.
-pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
+pub fn resolve_movement_pure(
+    units: &[UnitSnapshot],
+    cities: &[CitySnapshot],
+    city_capture_hp: u32,
+) -> CombatDeltas {
     // Snapshot-derived indices and initial working state.
     let initial_hps: HashMap<Entity, i32> = units
         .iter()
@@ -23,9 +27,19 @@ pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
         .map(|u| (u.entity, u.hp))
         .collect();
     let by_entity: HashMap<Entity, &UnitSnapshot> = units.iter().map(|u| (u.entity, u)).collect();
+    let initial_city_hps: HashMap<Entity, i32> = cities
+        .iter()
+        .map(|city| (city.entity, city.hp.max(0)))
+        .collect();
+    let mut city_hps = initial_city_hps.clone();
+    let mut city_owners: HashMap<Entity, Entity> = cities
+        .iter()
+        .map(|city| (city.entity, city.owner))
+        .collect();
     let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
     let mut hps: HashMap<Entity, i32> = HashMap::new();
     let mut deaths: HashSet<Entity> = HashSet::new();
+    let mut city_captures = Vec::new();
 
     for u in units {
         if u.hp <= 0 {
@@ -54,6 +68,17 @@ pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
         // 0 or 1 alive: tile is already settled; sole survivor (if any) stays at the conflict tile.
     }
 
+    resolve_city_melee(
+        units,
+        cities,
+        &mut positions,
+        &deaths,
+        &mut city_hps,
+        &mut city_owners,
+        city_capture_hp,
+        &mut city_captures,
+    );
+
     let hp_changes: HashMap<Entity, i32> = hps
         .iter()
         .filter_map(|(e, &h)| {
@@ -62,11 +87,75 @@ pub fn resolve_movement_pure(units: &[UnitSnapshot]) -> CombatDeltas {
             if delta != 0 { Some((*e, delta)) } else { None }
         })
         .collect();
+    let city_hp_changes: HashMap<Entity, i32> = city_hps
+        .iter()
+        .filter_map(|(e, &h)| {
+            let initial = initial_city_hps.get(e).copied().unwrap_or(0);
+            let delta = h - initial;
+            if delta != 0 { Some((*e, delta)) } else { None }
+        })
+        .collect();
 
     CombatDeltas {
         hp_changes,
+        city_hp_changes,
+        city_captures,
         final_positions: positions,
         deaths,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_city_melee(
+    units: &[UnitSnapshot],
+    cities: &[CitySnapshot],
+    positions: &mut HashMap<Entity, HexPosition>,
+    deaths: &HashSet<Entity>,
+    city_hps: &mut HashMap<Entity, i32>,
+    city_owners: &mut HashMap<Entity, Entity>,
+    city_capture_hp: u32,
+    city_captures: &mut Vec<CityCapture>,
+) {
+    let mut attackers: Vec<_> = units
+        .iter()
+        .filter(|unit| unit.hp > 0)
+        .filter(|unit| !deaths.contains(&unit.entity))
+        .filter(|unit| unit.attack_range == 1)
+        .filter_map(|unit| {
+            let ResolveAction::MoveTo(target) = unit.action else {
+                return None;
+            };
+            if positions.get(&unit.entity).copied() != Some(target) {
+                return None;
+            }
+            Some((unit.entity, unit, target))
+        })
+        .collect();
+    attackers.sort_by_key(|(entity, _, _)| *entity);
+
+    for (unit_entity, unit, target) in attackers {
+        let Some(city) = cities.iter().find(|city| city.pos == target) else {
+            continue;
+        };
+        if city_owners.get(&city.entity).copied() == Some(unit.owner) {
+            continue;
+        }
+
+        let city_hp = city_hps.entry(city.entity).or_insert(0);
+        let before = *city_hp;
+        *city_hp = city_hp.saturating_sub(unit.attack_damage as i32);
+
+        if before <= 0 || *city_hp <= 0 {
+            city_owners.insert(city.entity, unit.owner);
+            *city_hp = (city_capture_hp.min(city.max_hp)) as i32;
+            city_captures.push(CityCapture {
+                city: city.entity,
+                by_unit: unit_entity,
+                new_owner: unit.owner,
+            });
+        } else {
+            positions.insert(unit.entity, unit.start_pos);
+        }
     }
 }
 
@@ -150,7 +239,7 @@ mod tests {
 
     #[test]
     fn empty_input_returns_empty_deltas() {
-        let deltas = resolve_movement_pure(&[]);
+        let deltas = resolve_movement_pure(&[], &[], 10);
         assert!(deltas.hp_changes.is_empty());
         assert!(deltas.final_positions.is_empty());
         assert!(deltas.deaths.is_empty());
@@ -185,7 +274,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         // Both alive → both rolled back to start. A back to (0,0), B stays at (1,0).
         assert_eq!(
@@ -232,7 +321,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         assert!(deltas.deaths.contains(&entities[1]), "B should be dead");
         assert!(!deltas.deaths.contains(&entities[0]), "A should be alive");
@@ -273,7 +362,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         assert!(deltas.deaths.contains(&entities[0]));
         assert!(deltas.deaths.contains(&entities[1]));
@@ -318,7 +407,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         // Each took 8 damage from the other two.
         assert_eq!(deltas.hp_changes.get(&entities[0]), Some(&-8));
@@ -387,7 +476,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         assert_eq!(deltas.final_positions.get(&entities[0]), Some(&t1));
         assert_eq!(deltas.final_positions.get(&entities[1]), Some(&t2));
@@ -442,7 +531,7 @@ mod tests {
             },
         ];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         // No conflict ever forms; both units end up at their destinations.
         assert_eq!(deltas.final_positions.get(&entities[0]), Some(&t2));
@@ -466,7 +555,7 @@ mod tests {
             action: ResolveAction::MoveTo(HexPosition::new(1, 0)),
         }];
 
-        let deltas = resolve_movement_pure(&snapshot);
+        let deltas = resolve_movement_pure(&snapshot, &[], 10);
 
         assert_eq!(
             deltas.final_positions.get(&entities[0]),
@@ -477,5 +566,109 @@ mod tests {
             "no damage in a non-conflict move"
         );
         assert!(deltas.deaths.is_empty());
+    }
+
+    #[test]
+    fn melee_city_attack_captures_and_keeps_unit_on_city() {
+        let (_world, entities) = fake_entities(2);
+        let attacker_owner = entities[0];
+        let defender_owner = entities[1];
+        let city = Entity::PLACEHOLDER;
+        let city_pos = HexPosition::new(1, 0);
+        let snapshot = vec![UnitSnapshot {
+            entity: entities[0],
+            owner: attacker_owner,
+            hp: 10,
+            max_hp: 10,
+            attack_damage: 4,
+            attack_range: 1,
+            start_pos: HexPosition::new(0, 0),
+            action: ResolveAction::MoveTo(city_pos),
+        }];
+        let cities = vec![CitySnapshot {
+            entity: city,
+            owner: defender_owner,
+            hp: 3,
+            max_hp: 20,
+            pos: city_pos,
+        }];
+
+        let deltas = resolve_movement_pure(&snapshot, &cities, 10);
+
+        assert_eq!(deltas.final_positions.get(&entities[0]), Some(&city_pos));
+        assert_eq!(deltas.city_hp_changes.get(&city), Some(&7));
+        assert_eq!(
+            deltas.city_captures,
+            vec![CityCapture {
+                city,
+                by_unit: entities[0],
+                new_owner: attacker_owner,
+            }]
+        );
+    }
+
+    #[test]
+    fn melee_city_attack_rolls_back_when_city_survives() {
+        let (_world, entities) = fake_entities(2);
+        let attacker_owner = entities[0];
+        let defender_owner = entities[1];
+        let city = Entity::PLACEHOLDER;
+        let start = HexPosition::new(0, 0);
+        let city_pos = HexPosition::new(1, 0);
+        let snapshot = vec![UnitSnapshot {
+            entity: entities[0],
+            owner: attacker_owner,
+            hp: 10,
+            max_hp: 10,
+            attack_damage: 4,
+            attack_range: 1,
+            start_pos: start,
+            action: ResolveAction::MoveTo(city_pos),
+        }];
+        let cities = vec![CitySnapshot {
+            entity: city,
+            owner: defender_owner,
+            hp: 8,
+            max_hp: 20,
+            pos: city_pos,
+        }];
+
+        let deltas = resolve_movement_pure(&snapshot, &cities, 10);
+
+        assert_eq!(deltas.final_positions.get(&entities[0]), Some(&start));
+        assert_eq!(deltas.city_hp_changes.get(&city), Some(&-4));
+        assert!(deltas.city_captures.is_empty());
+    }
+
+    #[test]
+    fn ranged_unit_moving_to_city_does_not_melee_capture() {
+        let (_world, entities) = fake_entities(2);
+        let attacker_owner = entities[0];
+        let defender_owner = entities[1];
+        let city = Entity::PLACEHOLDER;
+        let city_pos = HexPosition::new(1, 0);
+        let snapshot = vec![UnitSnapshot {
+            entity: entities[0],
+            owner: attacker_owner,
+            hp: 10,
+            max_hp: 10,
+            attack_damage: 20,
+            attack_range: 2,
+            start_pos: HexPosition::new(0, 0),
+            action: ResolveAction::MoveTo(city_pos),
+        }];
+        let cities = vec![CitySnapshot {
+            entity: city,
+            owner: defender_owner,
+            hp: 1,
+            max_hp: 20,
+            pos: city_pos,
+        }];
+
+        let deltas = resolve_movement_pure(&snapshot, &cities, 10);
+
+        assert_eq!(deltas.final_positions.get(&entities[0]), Some(&city_pos));
+        assert!(deltas.city_hp_changes.is_empty());
+        assert!(deltas.city_captures.is_empty());
     }
 }

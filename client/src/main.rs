@@ -1,6 +1,7 @@
 mod audio;
 mod camera;
 mod input;
+mod lobby;
 mod ui;
 mod visuals;
 
@@ -16,11 +17,12 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{events::*, plugin::SharedPlugin};
+use shared::{assets::assets_dir, events::*, plugin::SharedPlugin};
 
 use audio::*;
 use camera::*;
 use input::*;
+use lobby::*;
 use ui::*;
 use visuals::*;
 
@@ -30,22 +32,19 @@ const HEX_SIZE: f32 = 40.0;
 #[derive(Resource)]
 struct ServerAddr(SocketAddr);
 
-/// Stores the local player's color index after receiving YourPlayer event.
-#[derive(Resource)]
-pub struct LocalPlayerColor(pub u8);
-
 fn main() {
     let addr_str = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:5000".to_string());
+        .unwrap_or_else(|| "158.180.62.178:8080".to_string());
     let addr: SocketAddr = addr_str.parse().expect("Invalid server address");
 
     println!("Connecting to server at {addr}");
+    let asset_path = assets_dir();
 
     App::new()
         .add_plugins((
             DefaultPlugins.set(AssetPlugin {
-                file_path: format!("{}/../assets", env!("CARGO_MANIFEST_DIR")),
+                file_path: asset_path.to_string_lossy().into_owned(),
                 ..default()
             }),
             RepliconPlugins,
@@ -61,10 +60,14 @@ fn main() {
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
         .init_resource::<CameraZoom>()
-        .add_systems(Startup, (connect_to_server, play_background_music))
+        .add_systems(
+            Startup,
+            (connect_to_server, play_background_music, spawn_lobby_ui),
+        )
         .init_state::<UiState>()
         .add_observer(on_your_player)
-        .add_systems(Update, (update_city_visuals, update_unit_health_bars))
+        .add_observer(handle_start_game_click)
+        .add_systems(Update, (update_lose_screen, update_lobby_ui))
         .run();
 }
 
@@ -100,15 +103,7 @@ fn connect_to_server(
     Ok(())
 }
 
-fn on_your_player(
-    trigger: On<YourPlayer>,
-    mut commands: Commands,
-    mut controller: ResMut<Controller>,
-) {
-    let color_index = trigger.color_index;
-    commands.insert_resource(LocalPlayerColor(color_index));
-    println!("Assigned player color index: {color_index}");
-    let player_entity = trigger.player_entity;
-    println!("Received player_entity: {player_entity}");
-    controller.player_entity = Some(player_entity);
+fn on_your_player(trigger: On<YourPlayer>, mut controller: ResMut<Controller>) {
+    controller.player_entity = Some(trigger.player_entity);
+    println!("Received player_entity: {}", trigger.player_entity);
 }

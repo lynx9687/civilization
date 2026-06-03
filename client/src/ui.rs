@@ -7,8 +7,10 @@ use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, R
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
-use crate::LocalPlayerColor;
-use crate::input::{Controller, InputSelection, LastSubmittedTurn, TargetableVerb, UiState};
+use crate::input::{
+    Controller, InputSelection, LastSubmittedTurn, TargetableVerb, UiState, local_player_defeated,
+    local_player_game_over, local_player_victorious,
+};
 use crate::visuals::theme;
 
 #[derive(Component)]
@@ -34,6 +36,12 @@ pub struct ProductionBar;
 
 #[derive(Component)]
 pub struct ProductionButton(pub Option<ProductionRecipeId>);
+
+#[derive(Component)]
+pub struct LoseScreen;
+
+#[derive(Component)]
+pub struct VictoryScreen;
 
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
@@ -146,6 +154,80 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             ..default()
         },
     ));
+
+    commands.spawn((
+        LoseScreen,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            top: Val::Px(0.0),
+            bottom: Val::Px(0.0),
+            display: Display::None,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(16.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+        GlobalZIndex(100),
+        children![
+            (
+                Text::new("You lost"),
+                TextFont {
+                    font_size: 64.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.1, 0.1)),
+            ),
+            (
+                Text::new("Close the app to leave the game."),
+                TextFont {
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            )
+        ],
+    ));
+
+    commands.spawn((
+        VictoryScreen,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            top: Val::Px(0.0),
+            bottom: Val::Px(0.0),
+            display: Display::None,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(16.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+        GlobalZIndex(100),
+        children![
+            (
+                Text::new("You won"),
+                TextFont {
+                    font_size: 64.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.1, 0.85, 0.25)),
+            ),
+            (
+                Text::new("Close the app to leave the game."),
+                TextFont {
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            )
+        ],
+    ));
 }
 
 pub fn finish_turn_trigger_system(
@@ -154,7 +236,13 @@ pub fn finish_turn_trigger_system(
     mut next_ui_state: ResMut<NextState<UiState>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
+    controller: Res<Controller>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        return;
+    }
     let Ok(state) = turn_state.single() else {
         return;
     };
@@ -216,16 +304,26 @@ pub fn reset_ui_state_on_turn_state_change(
 
 pub fn update_turn_ui(
     turn_state: Query<&TurnState>,
-    local_color: Option<Res<LocalPlayerColor>>,
+    controller: Res<Controller>,
     last_submitted: Res<LastSubmittedTurn>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     mut ui_text: Query<&mut Text, With<TurnUiText>>,
 ) {
     let Ok(mut text) = ui_text.single_mut() else {
         return;
     };
 
-    if local_color.is_none() {
+    if controller.player_entity.is_none() {
         **text = "Connecting...".to_string();
+        return;
+    }
+    if local_player_defeated(&controller, &defeated) {
+        **text = "You lost".to_string();
+        return;
+    }
+    if local_player_victorious(&controller, &victorious) {
+        **text = "You won".to_string();
         return;
     }
 
@@ -235,6 +333,7 @@ pub fn update_turn_ui(
     };
 
     let message = match state.phase {
+        TurnPhase::Lobby => "In lobby — waiting for game to start...".to_string(),
         TurnPhase::WaitingForPlayers => "Waiting for players to join...".to_string(),
         TurnPhase::Accepting => {
             let submitted = last_submitted.0.is_some_and(|t| t >= state.turn_number);
@@ -383,16 +482,19 @@ fn format_recipe_progress(
 pub fn update_production_bar(
     controller: Res<Controller>,
     cities: Query<&CityOwner, With<City>>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     mut bars: Query<&mut Node, With<ProductionBar>>,
 ) {
-    if !controller.is_changed() {
+    if !controller.is_changed() && defeated.is_empty() && victorious.is_empty() {
         return;
     }
 
-    let show = controller
-        .selected_city
-        .and_then(|city| cities.get(city).ok())
-        .is_some_and(|owner| Some(owner.entity) == controller.player_entity);
+    let show = !local_player_game_over(&controller, &defeated, &victorious)
+        && controller
+            .selected_city
+            .and_then(|city| cities.get(city).ok())
+            .is_some_and(|owner| Some(owner.entity) == controller.player_entity);
 
     for mut node in &mut bars {
         node.display = if show { Display::Flex } else { Display::None };
@@ -400,14 +502,24 @@ pub fn update_production_bar(
 }
 
 // reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
+#[allow(clippy::too_many_arguments)]
 pub fn update_action_bar(
     ui_state: Res<State<UiState>>,
     mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
     mut buttons: Query<(&VerbButton, &mut BackgroundColor, &mut BorderColor)>,
     units: Query<&Unit>,
     registry: Res<UnitRegistry>,
+    controller: Res<Controller>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
-    if !ui_state.is_changed() {
+    if !ui_state.is_changed() && defeated.is_empty() && victorious.is_empty() {
+        return;
+    }
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        for mut node in &mut bars {
+            node.display = Display::None;
+        }
         return;
     }
     let unit_entity = match ui_state.selection() {
@@ -533,7 +645,16 @@ pub fn handle_verb_button_click(
     registry: Res<UnitRegistry>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
+    controller: Res<Controller>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
+        return;
+    }
     let Ok(VerbButton(verb)) = buttons.get(click.entity) else {
         return;
     };
@@ -635,6 +756,7 @@ pub fn handle_verb_button_click(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_production_button_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
@@ -642,7 +764,12 @@ pub fn handle_production_button_click(
     controller: Res<Controller>,
     turn_state: Query<&TurnState>,
     last_submitted: Res<LastSubmittedTurn>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
 ) {
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        return;
+    }
     let Ok(button) = buttons.get(click.entity) else {
         return;
     };
@@ -664,6 +791,29 @@ pub fn handle_production_button_click(
         None => CityAction::ClearProduction,
     };
     commands.client_trigger(CityActionEvent { city, action });
+}
+
+pub fn update_lose_screen(
+    controller: Res<Controller>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
+    mut screens: Query<&mut Node, With<LoseScreen>>,
+    mut victory_screens: Query<&mut Node, (With<VictoryScreen>, Without<LoseScreen>)>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
+) {
+    let lost = local_player_defeated(&controller, &defeated);
+    let won = local_player_victorious(&controller, &victorious);
+    if lost || won {
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
+    }
+    for mut node in &mut screens {
+        node.display = if lost { Display::Flex } else { Display::None };
+    }
+    for mut node in &mut victory_screens {
+        node.display = if won { Display::Flex } else { Display::None };
+    }
 }
 
 pub struct UiPlugin;

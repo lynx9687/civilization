@@ -1,9 +1,12 @@
+pub mod assets;
 pub mod cities;
 pub mod components;
 pub mod events;
 pub mod hex;
+pub mod map_settings;
 pub mod plugin;
 pub mod production;
+pub mod terrain;
 pub mod tiles;
 pub mod unit_definition;
 pub mod units;

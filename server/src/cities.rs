@@ -4,13 +4,7 @@ use shared::{
     hex::HexPosition,
     production::CityProduction,
     tiles::{TileOwner, TileResources},
-    units::ColorIndex,
-};
-
-pub const DEFAULT_TILE_RESOURCES: TileResources = TileResources {
-    food: 2,
-    production: 1,
-    gold: 1,
+    units::{ColorIndex, Health},
 };
 
 pub const STARTING_POPULATION: u32 = 1;
@@ -18,11 +12,17 @@ pub const STARTING_BORDER_RANGE: i32 = 1;
 pub const MAX_BORDER_RANGE: i32 = 3;
 pub const POPULATION_PER_BORDER_RANGE: u32 = 3;
 pub const FOOD_GROWTH_MULTIPLIER: i32 = 5;
+pub const CITY_MAX_HP: u32 = 20;
+pub const CITY_CAPTURE_HP: u32 = 10;
+pub const CITY_REGEN_PER_TURN: u32 = 2;
 
 #[derive(EntityEvent)]
 pub struct GrowCity {
     pub entity: Entity,
 }
+
+#[derive(Component)]
+pub struct CityAttackedThisTurn;
 
 /// Spawns a city controlled by `player_id` at the given map tile.
 pub fn spawn_city_at_tile(
@@ -48,6 +48,7 @@ pub fn spawn_city_at_tile(
                 entity: player_entity,
             },
             ColorIndex(color_index),
+            Health::full(CITY_MAX_HP),
         ))
         .id();
     commands.trigger(GrowCity { entity });

@@ -36,17 +36,20 @@ impl UnitAction {
     }
 }
 
-/// Server-to-client event: tells a client which player is theirs.
+/// Server-to-client event: tells a client which player entity is theirs.
 #[derive(Event, Serialize, Deserialize, MapEntities, Clone, Debug)]
 pub struct YourPlayer {
     #[entities]
     pub player_entity: Entity,
-    pub color_index: u8,
 }
 
 /// Client-to-server event: player finished his turn
 #[derive(Event, Serialize, Deserialize)]
 pub struct FinishTurn;
+
+/// Client-to-server event: host requests the game to start (Lobby → Accepting).
+#[derive(Event, Serialize, Deserialize, Clone, Debug)]
+pub struct StartGame;
 
 /// Single client-to-server event covering city-level actions.
 /// `city` is mapped by replicon between client-side and server-side Entity ids.
