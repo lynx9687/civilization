@@ -50,10 +50,22 @@ fn main() {
 
     App::new()
         .add_plugins((
-            DefaultPlugins.set(AssetPlugin {
-                file_path: asset_path.to_string_lossy().into_owned(),
-                ..default()
-            }),
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: asset_path.to_string_lossy().into_owned(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        // On web, attach to our own canvas and track its parent's
+                        // size so the game fills the page. Both fields are no-ops on
+                        // native, so this is safe to set unconditionally.
+                        canvas: Some("#game-canvas".into()),
+                        fit_canvas_to_parent: true,
+                        ..default()
+                    }),
+                    ..default()
+                }),
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedPlugin,
