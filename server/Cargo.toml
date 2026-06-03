@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 bevy.workspace = true
 bevy_replicon.workspace = true
-bevy_replicon_renet2 = { workspace = true, features = ["native_transport"] }
+bevy_replicon_renet2 = { workspace = true, features = ["native_transport", "ws_server_transport"] }
 shared = { path = "../shared" }
 rand = "0.8"
+# WebSocket server transport runs its accept/read/write loops on a tokio runtime.
+tokio = { version = "1", features = ["rt-multi-thread"] }

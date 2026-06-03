@@ -15,7 +15,10 @@ use bevy::{app::ScheduleRunnerPlugin, prelude::*, state::app::StatesPlugin};
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet2::{
     RenetChannelsExt, RepliconRenetPlugins,
-    netcode::{NativeSocket, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig},
+    netcode::{
+        BoxedSocket, NativeSocket, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig,
+        WebSocketServer, WebSocketServerConfig,
+    },
     renet2::{ConnectionConfig, RenetServer},
 };
 use shared::{components::*, map_settings::MapSettings, plugin::SharedPlugin};
@@ -113,24 +116,53 @@ fn start_server(
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
-    let socket = NativeSocket::new(UdpSocket::bind(addr.0)?)?;
+
+    // Socket 0: native UDP for desktop clients.
+    let udp_socket = NativeSocket::new(UdpSocket::bind(addr.0)?)?;
+
+    // Socket 1: WebSocket for browser (wasm) clients, which can't speak UDP.
+    // The WebSocket transport runs its accept/read/write loops on a tokio runtime;
+    // we keep that runtime alive for the app's lifetime by storing it as a resource
+    // (dropping it would shut down the worker threads and kill all WS connections).
+    // It listens on the same IP as UDP, one port higher.
+    let ws_addr = SocketAddr::new(addr.0.ip(), addr.0.port() + 1);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let ws_socket = WebSocketServer::new(
+        WebSocketServerConfig::new(ws_addr, 8),
+        runtime.handle().clone(),
+    )
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+
     let server_config = ServerSetupConfig {
         current_time,
         max_clients: 8,
         protocol_id: PROTOCOL_ID,
         // renet2 supports multiple sockets per server; the outer Vec is indexed
-        // by socket id, so socket 0 gets our single bind address.
-        socket_addresses: vec![vec![addr.0]],
+        // by socket id. Socket 0 is UDP, socket 1 is WebSocket. Clients pick the
+        // matching socket id in their ClientAuthentication.
+        socket_addresses: vec![vec![addr.0], vec![ws_addr]],
         authentication: ServerAuthentication::Unsecure,
     };
-    let transport = NetcodeServerTransport::new(server_config, socket)?;
+    let transport = NetcodeServerTransport::new_with_sockets(
+        server_config,
+        vec![BoxedSocket::new(udp_socket), BoxedSocket::new(ws_socket)],
+    )?;
 
     commands.insert_resource(server);
     commands.insert_resource(transport);
+    commands.insert_resource(WsRuntime(runtime));
 
-    println!("Server listening on {}", addr.0);
+    println!("Server listening on UDP {} and WebSocket ws://{ws_addr}", addr.0);
     Ok(())
 }
+
+/// Holds the tokio runtime that drives the WebSocket server's background tasks.
+/// Kept as a resource purely to keep the runtime (and its worker threads) alive
+/// for the lifetime of the app.
+#[derive(Resource)]
+struct WsRuntime(#[allow(dead_code)] tokio::runtime::Runtime);
 
 /// Spawns the lobby turn-state. The map itself is generated at game start
 /// (`generate_map_on_start`), once the host's settings and player count are known.

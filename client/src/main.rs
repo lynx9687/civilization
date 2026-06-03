@@ -5,10 +5,12 @@ mod lobby;
 mod ui;
 mod visuals;
 
-use std::{
-    net::{Ipv4Addr, SocketAddr, UdpSocket},
-    time::SystemTime,
-};
+use std::net::SocketAddr;
+use std::time::SystemTime;
+
+// UDP is only used by the native transport; the wasm build connects over WebSocket.
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::{Ipv4Addr, UdpSocket};
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
@@ -159,8 +161,9 @@ fn connect_to_server(
     channels: Res<RepliconChannels>,
     addr: Res<ServerAddr>,
 ) -> Result<()> {
-    let server_url = url::Url::parse(&format!("ws://{}", addr.0))?;
-    let socket = WebSocketClient::new(WebSocketClientConfig { server_url })?;
+    let server_url = url::Url::parse(&format!("ws://127.0.0.1:8081"))?;
+    let socket = WebSocketClient::new(WebSocketClientConfig { server_url })
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
 
@@ -175,7 +178,8 @@ fn connect_to_server(
     let client_id = current_time.as_millis() as u64;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
-        socket_id: 0,
+        // Socket 1 on the server is the WebSocket transport (socket 0 is UDP).
+        socket_id: 1,
         protocol_id: PROTOCOL_ID,
         server_addr: addr.0,
         user_data: None,
