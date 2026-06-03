@@ -86,12 +86,13 @@ fn main() {
                     update_unit_health_bars,
                     update_city_health_bars,
                 ),
+                sync_game_finished_ui_state,
                 (
                     move_camera_with_keyboard,
                     zoom_camera_with_scroll,
                     update_hex_highlights,
-                    handle_left_click,
-                    handle_right_click,
+                    handle_left_click.run_if(mouse_not_over_ui_button),
+                    handle_right_click.run_if(mouse_not_over_ui_button),
                     handle_escape_key,
                     prune_stale_selection,
                 ),
@@ -105,7 +106,8 @@ fn main() {
                     update_lobby_ui,
                     update_lose_screen,
                 ),
-            ),
+            )
+                .chain(),
         )
         .run();
 }

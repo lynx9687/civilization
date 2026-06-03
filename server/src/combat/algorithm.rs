@@ -27,18 +27,14 @@ pub fn resolve_movement_pure(
         .map(|u| (u.entity, u.hp))
         .collect();
     let by_entity: HashMap<Entity, &UnitSnapshot> = units.iter().map(|u| (u.entity, u)).collect();
+    let mut unit_positions: HashMap<Entity, HexPosition> = HashMap::new();
+    let mut unit_hps: HashMap<Entity, i32> = HashMap::new();
+    let mut unit_deaths: HashSet<Entity> = HashSet::new();
     let initial_city_hps: HashMap<Entity, i32> = cities
         .iter()
         .map(|city| (city.entity, city.hp.max(0)))
         .collect();
-    let mut city_hps = initial_city_hps.clone();
-    let mut city_owners: HashMap<Entity, Entity> = cities
-        .iter()
-        .map(|city| (city.entity, city.owner))
-        .collect();
-    let mut positions: HashMap<Entity, HexPosition> = HashMap::new();
-    let mut hps: HashMap<Entity, i32> = HashMap::new();
-    let mut deaths: HashSet<Entity> = HashSet::new();
+    let mut city_working = cities.to_vec();
     let mut city_captures = Vec::new();
 
     for u in units {
@@ -49,8 +45,8 @@ pub fn resolve_movement_pure(
             ResolveAction::Stationary => u.start_pos,
             ResolveAction::MoveTo(t) => t,
         };
-        positions.insert(u.entity, desired);
-        hps.insert(u.entity, u.hp);
+        unit_positions.insert(u.entity, desired);
+        unit_hps.insert(u.entity, u.hp);
     }
 
     let mut iter_count = 0_u32;
@@ -58,28 +54,27 @@ pub fn resolve_movement_pure(
         iter_count += 1;
         assert!(iter_count < 256, "rollback chain failed to terminate");
 
-        let Some((_tile, combatants)) = find_first_conflict(&positions, &deaths) else {
+        let Some((_tile, combatants)) = find_first_conflict(&unit_positions, &unit_deaths) else {
             break;
         };
-        let survivors = apply_combat_at_tile(&combatants, &by_entity, &mut hps, &mut deaths);
+        let survivors =
+            apply_combat_at_tile(&combatants, &by_entity, &mut unit_hps, &mut unit_deaths);
         if survivors.len() > 1 {
-            rollback_to_start(&survivors, &by_entity, &mut positions);
+            rollback_to_start(&survivors, &by_entity, &mut unit_positions);
         }
         // 0 or 1 alive: tile is already settled; sole survivor (if any) stays at the conflict tile.
     }
 
     resolve_city_melee(
         units,
-        cities,
-        &mut positions,
-        &deaths,
-        &mut city_hps,
-        &mut city_owners,
+        &mut city_working,
+        &mut unit_positions,
+        &unit_deaths,
         city_capture_hp,
         &mut city_captures,
     );
 
-    let hp_changes: HashMap<Entity, i32> = hps
+    let hp_changes: HashMap<Entity, i32> = unit_hps
         .iter()
         .filter_map(|(e, &h)| {
             let initial = initial_hps.get(e).copied().unwrap_or(0);
@@ -87,12 +82,16 @@ pub fn resolve_movement_pure(
             if delta != 0 { Some((*e, delta)) } else { None }
         })
         .collect();
-    let city_hp_changes: HashMap<Entity, i32> = city_hps
+    let city_hp_changes: HashMap<Entity, i32> = city_working
         .iter()
-        .filter_map(|(e, &h)| {
-            let initial = initial_city_hps.get(e).copied().unwrap_or(0);
-            let delta = h - initial;
-            if delta != 0 { Some((*e, delta)) } else { None }
+        .filter_map(|city| {
+            let initial = initial_city_hps.get(&city.entity).copied().unwrap_or(0);
+            let delta = city.hp - initial;
+            if delta != 0 {
+                Some((city.entity, delta))
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -100,32 +99,29 @@ pub fn resolve_movement_pure(
         hp_changes,
         city_hp_changes,
         city_captures,
-        final_positions: positions,
-        deaths,
+        final_positions: unit_positions,
+        deaths: unit_deaths,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_city_melee(
     units: &[UnitSnapshot],
-    cities: &[CitySnapshot],
-    positions: &mut HashMap<Entity, HexPosition>,
-    deaths: &HashSet<Entity>,
-    city_hps: &mut HashMap<Entity, i32>,
-    city_owners: &mut HashMap<Entity, Entity>,
+    cities: &mut [CitySnapshot],
+    unit_positions: &mut HashMap<Entity, HexPosition>,
+    unit_deaths: &HashSet<Entity>,
     city_capture_hp: u32,
     city_captures: &mut Vec<CityCapture>,
 ) {
     let mut attackers: Vec<_> = units
         .iter()
         .filter(|unit| unit.hp > 0)
-        .filter(|unit| !deaths.contains(&unit.entity))
+        .filter(|unit| !unit_deaths.contains(&unit.entity))
         .filter(|unit| unit.attack_range == 1)
         .filter_map(|unit| {
             let ResolveAction::MoveTo(target) = unit.action else {
                 return None;
             };
-            if positions.get(&unit.entity).copied() != Some(target) {
+            if unit_positions.get(&unit.entity).copied() != Some(target) {
                 return None;
             }
             Some((unit.entity, unit, target))
@@ -134,27 +130,26 @@ fn resolve_city_melee(
     attackers.sort_by_key(|(entity, _, _)| *entity);
 
     for (unit_entity, unit, target) in attackers {
-        let Some(city) = cities.iter().find(|city| city.pos == target) else {
+        let Some(city) = cities.iter_mut().find(|city| city.pos == target) else {
             continue;
         };
-        if city_owners.get(&city.entity).copied() == Some(unit.owner) {
+        if city.owner == unit.owner {
             continue;
         }
 
-        let city_hp = city_hps.entry(city.entity).or_insert(0);
-        let before = *city_hp;
-        *city_hp = city_hp.saturating_sub(unit.attack_damage as i32);
+        let before = city.hp;
+        city.hp = city.hp.saturating_sub(unit.attack_damage as i32);
 
-        if before <= 0 || *city_hp <= 0 {
-            city_owners.insert(city.entity, unit.owner);
-            *city_hp = (city_capture_hp.min(city.max_hp)) as i32;
+        if before <= 0 || city.hp <= 0 {
+            city.owner = unit.owner;
+            city.hp = (city_capture_hp.min(city.max_hp)) as i32;
             city_captures.push(CityCapture {
                 city: city.entity,
                 by_unit: unit_entity,
                 new_owner: unit.owner,
             });
         } else {
-            positions.insert(unit.entity, unit.start_pos);
+            unit_positions.insert(unit.entity, unit.start_pos);
         }
     }
 }

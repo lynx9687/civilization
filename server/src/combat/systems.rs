@@ -76,13 +76,14 @@ pub fn resolve_ranged_attacks(
 }
 
 /// ECS wrapper around `resolve_movement_pure`. Snapshots live units,
-/// runs the algorithm, applies HP / position deltas, and consumes MoveTo markers.
+/// snapshots cities, runs the algorithm, applies HP / ownership / position
+/// deltas, and consumes resolved MoveTo markers.
 ///
 /// Uses a `ParamSet` to avoid B0001: the read query (for snapshot building)
 /// and the write queries (for applying deltas) share `Health` and `HexPosition`,
 /// so Bevy requires them to be declared in a `ParamSet` to prove they are
 /// used exclusively, not concurrently.
-#[allow(clippy::type_complexity)] // ParamSet with a 6-tuple query; extracting a type alias gains little
+#[allow(clippy::type_complexity)] // ParamSet with several ECS queries; extracting a type alias gains little
 pub fn resolve_movement(
     mut queries: ParamSet<(
         // p0: read-only snapshot query
@@ -111,7 +112,7 @@ pub fn resolve_movement(
     registry: Res<UnitRegistry>,
     mut commands: Commands,
 ) {
-    // 1. Build snapshot — immutable pass.
+    // 1. Build immutable snapshots of live units and cities.
     let snapshot: Vec<UnitSnapshot> = queries
         .p0()
         .iter()
@@ -146,14 +147,14 @@ pub fn resolve_movement(
         })
         .collect();
 
-    // Index for log-time lookup of a unit's pre-resolution state.
+    // Index unit snapshots for cheap lookup of pre-resolution state while logging.
     let snap_by_entity: HashMap<Entity, &UnitSnapshot> =
         snapshot.iter().map(|s| (s.entity, s)).collect();
 
-    // 2. Run pure algorithm.
+    // 2. Run the pure resolver.
     let deltas = resolve_movement_pure(&snapshot, &city_snapshot, CITY_CAPTURE_HP);
 
-    // 3. Apply HP changes via p1.
+    // 3. Apply unit/city HP changes and city ownership updates.
     for (e, delta) in &deltas.hp_changes {
         if let Ok(mut h) = queries.p1().get_mut(*e) {
             let new_hp = (h.current as i32 + delta).max(0);
@@ -205,7 +206,7 @@ pub fn resolve_movement(
         }
     }
 
-    // 4. Apply final positions to non-dead units via p2.
+    // 4. Apply final positions to surviving units.
     for (e, pos) in &deltas.final_positions {
         if deltas.deaths.contains(e) {
             continue;
@@ -225,7 +226,7 @@ pub fn resolve_movement(
         }
     }
 
-    // 5. Consume MoveTo markers from every unit that had one.
+    // 5. Consume MoveTo markers from every live unit that had one.
     // Death is logged once, by cleanup_dead_units in the next system.
     for snap in &snapshot {
         if matches!(snap.action, ResolveAction::MoveTo(_)) {
