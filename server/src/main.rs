@@ -38,7 +38,7 @@ struct BindAddr(SocketAddr);
 fn main() {
     let addr_str = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:5000".to_string());
+        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
     let addr: SocketAddr = addr_str.parse().expect("Invalid bind address");
 
     println!("Starting server on {addr}");
