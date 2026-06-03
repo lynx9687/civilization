@@ -237,6 +237,7 @@ pub fn handle_left_click(
     mut controller: ResMut<Controller>,
     ui_state: Res<State<UiState>>,
     mut next_ui_state: ResMut<NextState<UiState>>,
+    button_press_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
     units: Query<(Entity, &Unit, &Owner, &HexPosition)>,
     cities: Query<(&HexPosition, &CityOwner), With<City>>,
     registry: Res<UnitRegistry>,
@@ -244,6 +245,12 @@ pub fn handle_left_click(
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if button_press_query
+        .iter()
+        .any(|interaction| *interaction == Interaction::Pressed)
+    {
         return;
     }
     let Ok(state) = turn_state.single() else {
