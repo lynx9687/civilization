@@ -9,6 +9,9 @@ bevy_replicon.workspace = true
 bevy_replicon_renet2.workspace = true
 shared = { path = "../shared" }
 getrandom.workspace = true
+# std::time::SystemTime::now() panics on wasm32-unknown-unknown (no system clock).
+# web-time is a drop-in that uses the browser clock on wasm and re-exports std on native.
+web-time = "1"
 
 # Desktop clients use the native UDP transport.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

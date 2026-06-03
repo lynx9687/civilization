@@ -154,7 +154,10 @@ fn start_server(
     commands.insert_resource(transport);
     commands.insert_resource(WsRuntime(runtime));
 
-    println!("Server listening on UDP {} and WebSocket ws://{ws_addr}", addr.0);
+    println!(
+        "Server listening on UDP {} and WebSocket ws://{ws_addr}",
+        addr.0
+    );
     Ok(())
 }
 

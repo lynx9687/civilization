@@ -31,3 +31,6 @@ target
 
 # Ignore wasm files
 *.wasm
+
+# Ignore copy of assets in web-client
+web-client/assets

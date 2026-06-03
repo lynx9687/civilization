@@ -6,7 +6,9 @@ mod ui;
 mod visuals;
 
 use std::net::SocketAddr;
-use std::time::SystemTime;
+// web-time re-exports std on native; on wasm it uses the browser clock, since
+// std::time::SystemTime::now() is unimplemented (and panics) there.
+use web_time::SystemTime;
 
 // UDP is only used by the native transport; the wasm build connects over WebSocket.
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,6 +34,9 @@ const PROTOCOL_ID: u64 = 0;
 const HEX_SIZE: f32 = 40.0;
 
 #[derive(Resource)]
+// On wasm the WebSocket endpoint is currently hardcoded, so this field isn't read
+// there yet; native still uses it. Remove once wasm derives its address from here.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct ServerAddr(SocketAddr);
 
 fn main() {
@@ -159,9 +164,15 @@ use bevy_replicon_renet2::netcode::{WebSocketClient, WebSocketClientConfig};
 fn connect_to_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
-    addr: Res<ServerAddr>,
+    // ServerAddr holds the deployment (UDP) address; the local WebSocket endpoint is
+    // hardcoded below for now, so the resource is intentionally unused here.
+    _addr: Res<ServerAddr>,
 ) -> Result<()> {
-    let server_url = url::Url::parse(&format!("ws://127.0.0.1:8081"))?;
+    // The URL and `server_addr` must agree: WebSocketClient::send rejects any packet
+    // whose destination differs from the address derived from this URL, so we build
+    // both from one SocketAddr. (Localhost WebSocket is the server's UDP port + 1.)
+    let ws_addr: SocketAddr = "127.0.0.1:8081".parse().unwrap();
+    let server_url = url::Url::parse(&format!("ws://{ws_addr}"))?;
     let socket = WebSocketClient::new(WebSocketClientConfig { server_url })
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let server_channels_config = channels.server_configs();
@@ -181,7 +192,7 @@ fn connect_to_server(
         // Socket 1 on the server is the WebSocket transport (socket 0 is UDP).
         socket_id: 1,
         protocol_id: PROTOCOL_ID,
-        server_addr: addr.0,
+        server_addr: ws_addr,
         user_data: None,
     };
     let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;
