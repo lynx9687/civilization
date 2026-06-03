@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 bevy.workspace = true
 bevy_replicon.workspace = true
-bevy_replicon_renet.workspace = true
+bevy_replicon_renet2 = { workspace = true, features = ["native_transport"] }
 shared = { path = "../shared" }
 rand = "0.8"

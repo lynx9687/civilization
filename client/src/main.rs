@@ -12,10 +12,10 @@ use std::{
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use bevy_replicon_renet::{
-    RenetChannelsExt, RenetClient, RepliconRenetPlugins,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
-    renet::ConnectionConfig,
+use bevy_replicon_renet2::{
+    RenetChannelsExt, RepliconRenetPlugins,
+    netcode::{ClientAuthentication, ClientSocket, NativeSocket, NetcodeClientTransport},
+    renet2::{ConnectionConfig, RenetClient},
 };
 use shared::{assets::assets_dir, events::*, map_settings::MapSettings, plugin::SharedPlugin};
 
@@ -119,22 +119,22 @@ fn connect_to_server(
     channels: Res<RepliconChannels>,
     addr: Res<ServerAddr>,
 ) -> Result<()> {
+    let socket = NativeSocket::new(UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?)?;
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
 
-    let client = RenetClient::new(ConnectionConfig {
-        server_channels_config,
-        client_channels_config,
-        ..Default::default()
-    });
+    let client = RenetClient::new(
+        ConnectionConfig::from_channels(server_channels_config, client_channels_config),
+        socket.is_reliable(),
+    );
 
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
     let client_id = current_time.as_millis() as u64;
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
+        socket_id: 0,
         protocol_id: PROTOCOL_ID,
         server_addr: addr.0,
         user_data: None,

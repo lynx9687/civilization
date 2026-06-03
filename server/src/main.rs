@@ -13,10 +13,10 @@ use std::{
 
 use bevy::{app::ScheduleRunnerPlugin, prelude::*, state::app::StatesPlugin};
 use bevy_replicon::prelude::*;
-use bevy_replicon_renet::{
-    RenetChannelsExt, RenetServer, RepliconRenetPlugins,
-    netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
-    renet::ConnectionConfig,
+use bevy_replicon_renet2::{
+    RenetChannelsExt, RepliconRenetPlugins,
+    netcode::{NativeSocket, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig},
+    renet2::{ConnectionConfig, RenetServer},
 };
 use shared::{components::*, map_settings::MapSettings, plugin::SharedPlugin};
 
@@ -105,25 +105,23 @@ fn start_server(
     channels: Res<RepliconChannels>,
     addr: Res<BindAddr>,
 ) -> Result<()> {
-    let server_channels_config = channels.server_configs();
-    let client_channels_config = channels.client_configs();
-
-    let server = RenetServer::new(ConnectionConfig {
-        server_channels_config,
-        client_channels_config,
-        ..Default::default()
-    });
+    let server = RenetServer::new(ConnectionConfig::from_channels(
+        channels.server_configs(),
+        channels.client_configs(),
+    ));
 
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
-    let socket = UdpSocket::bind(addr.0)?;
-    let server_config = ServerConfig {
+    let socket = NativeSocket::new(UdpSocket::bind(addr.0)?)?;
+    let server_config = ServerSetupConfig {
         current_time,
         max_clients: 8,
         protocol_id: PROTOCOL_ID,
+        // renet2 supports multiple sockets per server; the outer Vec is indexed
+        // by socket id, so socket 0 gets our single bind address.
+        socket_addresses: vec![vec![addr.0]],
         authentication: ServerAuthentication::Unsecure,
-        public_addresses: Default::default(),
     };
     let transport = NetcodeServerTransport::new(server_config, socket)?;
 

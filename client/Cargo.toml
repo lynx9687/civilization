@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 bevy.workspace = true
 bevy_replicon.workspace = true
-bevy_replicon_renet.workspace = true
+bevy_replicon_renet2.workspace = true
 shared = { path = "../shared" }
