@@ -8,3 +8,8 @@ bevy.workspace = true
 bevy_replicon.workspace = true
 bevy_replicon_renet2.workspace = true
 shared = { path = "../shared" }
+getrandom.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy_replicon_renet2 = {workspace = true, features = ["ws_client_transport"] }
+url = "2"

@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use bevy_replicon_renet2::{
     RenetChannelsExt, RepliconRenetPlugins,
-    netcode::{ClientAuthentication, ClientSocket, NativeSocket, NetcodeClientTransport},
+    netcode::{ClientAuthentication, ClientSocket, NetcodeClientTransport},
     renet2::{ConnectionConfig, RenetClient},
 };
 use shared::{assets::assets_dir, events::*, map_settings::MapSettings, plugin::SharedPlugin};
@@ -114,12 +114,53 @@ fn main() {
         .run();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+use bevy_replicon_renet2::netcode::NativeSocket;
+
+#[cfg(not(target_arch = "wasm32"))]
 fn connect_to_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
     addr: Res<ServerAddr>,
 ) -> Result<()> {
     let socket = NativeSocket::new(UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?)?;
+    let server_channels_config = channels.server_configs();
+    let client_channels_config = channels.client_configs();
+
+    let client = RenetClient::new(
+        ConnectionConfig::from_channels(server_channels_config, client_channels_config),
+        socket.is_reliable(),
+    );
+
+    let current_time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    let client_id = current_time.as_millis() as u64;
+    let authentication = ClientAuthentication::Unsecure {
+        client_id,
+        socket_id: 0,
+        protocol_id: PROTOCOL_ID,
+        server_addr: addr.0,
+        user_data: None,
+    };
+    let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;
+
+    commands.insert_resource(client);
+    commands.insert_resource(transport);
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+use bevy_replicon_renet2::netcode::{WebSocketClient, WebSocketClientConfig};
+
+#[cfg(target_arch = "wasm32")]
+fn connect_to_server(
+    mut commands: Commands,
+    channels: Res<RepliconChannels>,
+    addr: Res<ServerAddr>,
+) -> Result<()> {
+    let server_url = url::Url::parse(&format!("ws://{}", addr.0))?;
+    let socket = WebSocketClient::new(WebSocketClientConfig { server_url })?;
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
 

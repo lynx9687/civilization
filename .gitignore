@@ -25,3 +25,9 @@ target
 .codex
 
 .superpowers/
+.claude
+.cargo
+
+
+# Ignore wasm files
+*.wasm
