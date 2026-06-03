@@ -34,3 +34,6 @@ target
 
 # Ignore copy of assets in web-client
 web-client/assets
+
+# Ignore client.js since it is automatically generated
+web-client/client.js
