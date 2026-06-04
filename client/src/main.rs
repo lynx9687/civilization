@@ -70,7 +70,10 @@ fn main() {
         .add_observer(on_your_player)
         .add_observer(handle_start_game_click)
         .add_observer(handle_map_config_click)
-        .add_systems(Update, (update_lose_screen, update_lobby_ui, update_map_config_ui))
+        .add_systems(
+            Update,
+            (update_lose_screen, update_lobby_ui, update_map_config_ui),
+        )
         .run();
 }
 
