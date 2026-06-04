@@ -230,6 +230,7 @@ pub fn spawn_turn_ui(mut commands: Commands) {
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn finish_turn_trigger_system(
     mut commands: Commands,
     interaction_query: Query<&Interaction, (With<FinishTurnButton>, Changed<Interaction>)>,
@@ -251,12 +252,10 @@ pub fn finish_turn_trigger_system(
     };
 
     for interaction in &interaction_query {
-        if *interaction == Interaction::Pressed {
-            if last_submitted.0 != Some(state.turn_number) {
-                commands.client_trigger(FinishTurn);
-                last_submitted.0 = Some(state.turn_number);
-                next_ui_state.set(UiState::Locked);
-            }
+        if *interaction == Interaction::Pressed && last_submitted.0 != Some(state.turn_number) {
+            commands.client_trigger(FinishTurn);
+            last_submitted.0 = Some(state.turn_number);
+            next_ui_state.set(UiState::Locked);
         }
     }
 }
@@ -560,6 +559,7 @@ pub fn update_action_bar(
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn action_button_visual_system(
     ui_state: Res<State<UiState>>,
     units: Query<&Unit>,
