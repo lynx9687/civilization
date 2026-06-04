@@ -243,6 +243,9 @@ pub fn finish_turn_trigger_system(
     if local_player_game_over(&controller, &defeated, &victorious) {
         return;
     }
+    if local_player_game_over(&controller, &defeated, &victorious) {
+        return;
+    }
     let Ok(state) = turn_state.single() else {
         return;
     };
@@ -305,7 +308,10 @@ pub fn reset_ui_state_on_turn_state_change(
 pub fn update_turn_ui(
     turn_state: Query<&TurnState>,
     controller: Res<Controller>,
+    controller: Res<Controller>,
     last_submitted: Res<LastSubmittedTurn>,
+    defeated: Query<(), With<DefeatedPlayer>>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut ui_text: Query<&mut Text, With<TurnUiText>>,

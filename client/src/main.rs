@@ -17,7 +17,7 @@ use bevy_replicon_renet::{
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
-use shared::{assets::assets_dir, events::*, plugin::SharedPlugin};
+use shared::{assets::assets_dir, events::*, map_settings::MapSettings, plugin::SharedPlugin};
 
 use audio::*;
 use camera::*;
@@ -60,6 +60,8 @@ fn main() {
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
         .init_resource::<CameraZoom>()
+        // Host's pending lobby map choice; sent to the server via SetMapConfig.
+        .init_resource::<MapSettings>()
         .add_systems(
             Startup,
             (connect_to_server, play_background_music, spawn_lobby_ui),
@@ -67,7 +69,8 @@ fn main() {
         .init_state::<UiState>()
         .add_observer(on_your_player)
         .add_observer(handle_start_game_click)
-        .add_systems(Update, (update_lose_screen, update_lobby_ui))
+        .add_observer(handle_map_config_click)
+        .add_systems(Update, (update_lose_screen, update_lobby_ui, update_map_config_ui))
         .run();
 }
 
