@@ -56,32 +56,6 @@ pub fn local_player_game_over(
     local_player_defeated(controller, defeated) || local_player_victorious(controller, victorious)
 }
 
-pub fn local_player_defeated(
-    controller: &Controller,
-    defeated: &Query<(), With<DefeatedPlayer>>,
-) -> bool {
-    controller
-        .player_entity
-        .is_some_and(|player| defeated.contains(player))
-}
-
-pub fn local_player_victorious(
-    controller: &Controller,
-    victorious: &Query<(), With<VictoriousPlayer>>,
-) -> bool {
-    controller
-        .player_entity
-        .is_some_and(|player| victorious.contains(player))
-}
-
-pub fn local_player_game_over(
-    controller: &Controller,
-    defeated: &Query<(), With<DefeatedPlayer>>,
-    victorious: &Query<(), With<VictoriousPlayer>>,
-) -> bool {
-    local_player_defeated(controller, defeated) || local_player_victorious(controller, victorious)
-}
-
 /// Selection / targeting state and turn UI mode.
 /// Idle / selection is available while the local player can act.
 /// Locked is used once the player has finished their turn.
