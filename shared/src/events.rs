@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::hex::HexPosition;
+use crate::map_settings::MapSettings;
 use crate::production::ProductionRecipeId;
 use crate::unit_definition::UnitVerb;
 
@@ -50,6 +51,12 @@ pub struct FinishTurn;
 /// Client-to-server event: host requests the game to start (Lobby → Accepting).
 #[derive(Event, Serialize, Deserialize, Clone, Debug)]
 pub struct StartGame;
+
+/// Client-to-server event: host updates the map-generation settings while in the
+/// lobby. The server stores the payload in its `MapSettings` resource, which the
+/// generator reads at game start. Only honored from the host during the Lobby phase.
+#[derive(Event, Serialize, Deserialize, Clone, Debug)]
+pub struct SetMapConfig(pub MapSettings);
 
 /// Single client-to-server event covering city-level actions.
 /// `city` is mapped by replicon between client-side and server-side Entity ids.

@@ -1,6 +1,7 @@
 mod cities;
 mod cities_systems;
 mod combat;
+mod map_config;
 mod map_gen;
 mod players;
 mod turn;
@@ -22,6 +23,7 @@ use shared::{components::*, map_settings::MapSettings, plugin::SharedPlugin};
 use cities::*;
 use cities_systems::*;
 use combat::{cleanup_dead_units, resolve_movement, resolve_ranged_attacks};
+use map_config::handle_set_map_config;
 use map_gen::{
     MapTiles, cleanup_map_on_lobby, generate_map_on_start, should_cleanup_map, should_generate_map,
 };
@@ -36,7 +38,7 @@ struct BindAddr(SocketAddr);
 fn main() {
     let addr_str = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:5000".to_string());
+        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
     let addr: SocketAddr = addr_str.parse().expect("Invalid bind address");
 
     println!("Starting server on {addr}");
@@ -61,6 +63,7 @@ fn main() {
         .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
         .add_observer(handle_start_game)
+        .add_observer(handle_set_map_config)
         .add_observer(claim_city_tiles)
         .add_observer(complete_unit_production)
         .add_systems(
