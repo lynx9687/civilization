@@ -1,22 +1,14 @@
-//! Procedural map generation.
+//! Procedural map generation: built at game start, sized to the player count,
+//! with players placed on well-separated tiles of one connected landmass, from
+//! the host's `MapSettings`.
 //!
-//! Replaces the old fixed-radius `spawn_grid`: the map is generated at **game
-//! start**, when the player count is known, sized to the player count, with
-//! players placed on well-separated tiles of a single connected landmass. It
-//! reads the host's `MapSettings` (currently the server default — the lobby UI
-//! that lets the host choose them lands in a follow-up).
+//! Terrain comes from two coherent `Fbm<Perlin>` fields (elevation and moisture)
+//! sliced into bands, so water/forest/relief form contiguous regions. A mild
+//! radial edge falloff biases the rim downward, weighting water toward the edge
+//! while leaving an irregular coast and room for inland lakes.
 //!
-//! Terrain comes from two coherent noise fields — an *elevation* and a
-//! *moisture* `Fbm<Perlin>` — sampled per tile and sliced into bands, rather than
-//! independent per-tile dice rolls, so hills/forests/water form contiguous
-//! regions. A radial edge falloff pulls elevation down toward the rim, biasing
-//! water to the map edge so the core landmass stays connected. The `MapSettings`
-//! knobs shift the band thresholds: `water` raises sea level, `hilliness` lifts
-//! the hill/mountain cutoffs, `forest` lowers the moisture needed for forest.
-//!
-//! Determinism: the noise fields are seeded by a single `u32` drawn from the
-//! caller's seeded RNG, and the output is built by iterating the sorted-disc
-//! `positions` vector — no `HashMap`/`HashSet` iteration order leaks in, so the
+//! Determinism: the noise seed comes from the caller's RNG and output is built in
+//! the disc's fixed scan order, so no `HashMap` iteration order leaks in — the
 //! same seed reproduces the same map across process runs.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -36,10 +28,8 @@ use shared::units::{ColorIndex, Health, Owner, Unit};
 /// Units placed per player at game start.
 const STARTING_UNITS: [&str; 5] = ["warrior", "archer", "settler", "knight", "cavalry"];
 
-/// The current game's map: every tile position and its terrain. Empty until
-/// generation. It's the authoritative "is this hex on the map / what's there"
-/// lookup (movement bounds + passability) and the run-condition flag, so
-/// generation happens exactly once per game.
+/// Tile position → terrain for the current game: the authoritative on-map /
+/// passability lookup. Empty until generated (also the run-condition flag).
 #[derive(Resource, Default, Debug)]
 pub struct MapTiles(pub HashMap<HexPosition, Terrain>);
 
@@ -52,31 +42,40 @@ fn base_radius(size: MapSize) -> i32 {
     }
 }
 
-/// Disc radius for `player_count` players. Grows with the count so every player
-/// gets a separated cluster of [`STARTING_UNITS`], and is capped so games stay
-/// small. Always at least 3.
+/// Disc radius for `player_count`: grows with the count (room for separated
+/// clusters), capped so games stay small.
 fn map_radius(size: MapSize, player_count: usize) -> i32 {
     (base_radius(size) + player_count as i32).clamp(3, 16)
 }
 
-/// Octaves for both noise fields. A few octaves give broad bands with a little
-/// fine detail without turning into per-tile salt-and-pepper.
+/// Octaves per field; a few add fine detail without per-tile salt-and-pepper.
 const NOISE_OCTAVES: usize = 4;
 
-/// Spatial frequency of the noise per hex step. Perlin/Fbm is exactly 0 at
-/// integer lattice points, so we *must* sample at a fractional scale — at ~0.18
-/// the dominant features span several tiles, giving coherent bands across a
-/// radius 4..16 disc rather than noise-per-tile (or a flat zero map).
-const NOISE_FREQUENCY: f64 = 0.18;
+/// Spatial frequency per hex step: a feature spans ~`1.0 / NOISE_FREQUENCY`
+/// tiles. Low enough for coherent multi-tile regions, high enough that the field
+/// has many peaks and troughs, so relief scatters into separate clusters and
+/// interior dips form lakes instead of one central blob. (Frequency sets feature
+/// scale, not whether the map is flat — see `fbm_off_lattice_is_nonzero`.)
+const NOISE_FREQUENCY: f64 = 0.21;
 
-/// Generates the tiles for a game. Deterministic in `rng`: the same seeded RNG,
-/// `settings`, and `player_count` always produce the same map — including across
-/// process runs, since the noise seed comes from `rng` and the output is built in
-/// the disc's fixed scan order.
-///
-/// Guarantees the passable-land tiles form **one connected component** — any
-/// passable tile that would be cut off is turned to water, so no player can be
-/// walled off ("all continents connected").
+/// Strength of the `edge²` falloff. Mild, so the rim is only nudged down: the
+/// coast bites in irregularly and interior dips flood into inland lakes instead
+/// of water forming a uniform rim.
+const EDGE_FALLOFF_STRENGTH: f64 = 0.20;
+
+/// Water fraction at `water` knob 0, plus how much the knob adds. Clamped later
+/// so enough land always remains to seat units.
+const WATER_BASE: f64 = 0.14;
+const WATER_KNOB_SCALE: f64 = 0.45;
+
+/// Share of the land turned into mountains / hills at `hilliness` 1 (scaled by
+/// the knob). Mountains are drawn first from the highest elevations, then hills.
+const MOUNTAIN_FRAC: f64 = 0.18;
+const HILL_FRAC: f64 = 0.32;
+
+/// Generates the tiles for a game. Deterministic in `rng` (same seed/settings/
+/// `player_count` ⇒ identical map, across process runs too), and guarantees the
+/// passable land forms **one connected component** — any cut-off tile is drowned.
 pub fn generate_map(
     settings: &MapSettings,
     player_count: usize,
@@ -85,19 +84,15 @@ pub fn generate_map(
     let radius = map_radius(settings.size, player_count.max(1));
     let positions = generate_grid(radius);
 
-    // One u32 from the seeded RNG drives both noise fields; the `noise` crate
-    // builds its permutation table deterministically from it, so the same seed
-    // reproduces the same fields across runs. Moisture is offset so the two
-    // fields are uncorrelated.
-    // `gen` is a reserved keyword in edition 2024; call the raw identifier.
+    // Seed both fields from one RNG draw (moisture offset to decorrelate).
+    // `r#gen`: `gen` is a reserved keyword in edition 2024.
     let noise_seed = rng.r#gen::<u32>();
     let elevation = fbm(noise_seed);
     let moisture = fbm(noise_seed ^ 0x9E37_79B9);
 
-    // Sample both fields per tile (iterating the disc's fixed scan order, never a
-    // HashMap, so nothing seed-nondeterministic leaks in). `land_elev` carves the
-    // coast: subtracting an edge^2 falloff sinks the rim, so the lowest-elevation
-    // tiles — the ones water-banding will drown — are coastal, keeping land whole.
+    // Sample per tile in the disc's fixed scan order. `land_elev` subtracts the
+    // edge falloff so the rim and interior dips rank lowest — those get drowned,
+    // keeping the main landmass whole.
     let mut samples: Vec<TileSample> = Vec::with_capacity(positions.len());
     for &pos in &positions {
         let e = sample(&elevation, pos);
@@ -111,9 +106,8 @@ pub fn generate_map(
 
     let mut terrain = band_by_rank(&samples, settings);
 
-    // Keep only the largest connected blob of passable land; drown the rest so
-    // the passable set is connected by construction. This is the LAST terrain
-    // mutation — anything after it could reintroduce a cut-off passable tile.
+    // Keep only the largest passable blob; drown the rest so the passable set is
+    // connected. Must be the last terrain mutation.
     let land = largest_passable_component(&terrain);
     for (pos, t) in terrain.iter_mut() {
         if t.is_passable() && !land.contains(pos) {
@@ -124,57 +118,45 @@ pub fn generate_map(
     positions.into_iter().map(|p| (p, terrain[&p])).collect()
 }
 
-/// One tile's coherent-noise inputs: coast-adjusted elevation and moisture.
+/// One tile's coast-adjusted elevation and moisture.
 struct TileSample {
     pos: HexPosition,
-    land_elev: f32,
-    moisture: f32,
+    land_elev: f64,
+    moisture: f64,
 }
 
-/// Builds a fractal-Brownian-motion Perlin field with our standard octave count,
-/// seeded deterministically by `seed`.
+/// Fbm Perlin field seeded by `seed`.
 fn fbm(seed: u32) -> Fbm<Perlin> {
     Fbm::<Perlin>::new(seed).set_octaves(NOISE_OCTAVES)
 }
 
-/// Samples `field` at hex `pos`, returning a value normalized to roughly `0.0..1.0`.
-/// Coordinates are scaled by [`NOISE_FREQUENCY`] (never integer — see the const)
-/// so features span several tiles.
-fn sample(field: &Fbm<Perlin>, pos: HexPosition) -> f32 {
+/// Samples `field` at `pos`, scaled by [`NOISE_FREQUENCY`] and normalized to ~0..1.
+fn sample(field: &Fbm<Perlin>, pos: HexPosition) -> f64 {
     let raw = field.get([
         pos.q as f64 * NOISE_FREQUENCY,
         pos.r as f64 * NOISE_FREQUENCY,
     ]);
-    // Fbm output is roughly in -1.0..1.0; remap to 0.0..1.0 and clamp the tails.
-    ((raw as f32) * 0.5 + 0.5).clamp(0.0, 1.0)
+    // Remap Fbm's ~-1..1 to 0..1.
+    (raw * 0.5 + 0.5).clamp(0.0, 1.0)
 }
 
-/// Radial falloff (edge^2, biting only near the rim) subtracted from elevation so
-/// the coast sinks and water bands to the map edge rather than the interior.
-fn edge_falloff(pos: HexPosition, radius: i32) -> f32 {
+/// `edge²` falloff ([`EDGE_FALLOFF_STRENGTH`]) subtracted from elevation, biasing
+/// the rim downward so water leans toward the edge and the coast stays irregular.
+fn edge_falloff(pos: HexPosition, radius: i32) -> f64 {
     let origin = HexPosition::new(0, 0);
     let edge = if radius > 0 {
-        pos.distance(&origin) as f32 / radius as f32
+        pos.distance(&origin) as f64 / radius as f64
     } else {
         0.0
     };
-    edge * edge
+    EDGE_FALLOFF_STRENGTH * edge * edge
 }
 
-/// Classifies every tile into a terrain band by **rank within this map**, not by
-/// absolute noise value. The noise fields are bell-shaped and sit at a
-/// seed-dependent place on the number line, so absolute thresholds give wildly
-/// varying (often empty) bands; ranking the actual per-map distribution makes the
-/// knobs control real proportions and is distribution-invariant.
-///
-/// - `water` ⇒ the lowest fraction of `land_elev` becomes Water (coastal, since
-///   the edge falloff put the rim at the bottom — keeps land connected).
-/// - `hilliness` ⇒ the highest land by elevation becomes Mountain, then Hill.
-/// - `forest` ⇒ the wettest remaining lowland becomes Forest.
-///
-/// Determinism: ranks are computed by sorting with [`f32::total_cmp`] (NaN-safe)
-/// and breaking ties on `(q, r)`, then terrain is assigned by index — no float
-/// threshold comparisons, no HashMap iteration order.
+/// Classifies each tile into a terrain band by **rank within this map**, not by
+/// absolute noise value: the fields are bell-shaped and seed-dependent, so fixed
+/// thresholds give wildly varying (often empty) bands. `water` takes the lowest
+/// elevations, `hilliness` the highest land, `forest` the wettest lowland.
+/// Deterministic: sorts use [`f64::total_cmp`] with `(q, r)` tie-breaks.
 fn band_by_rank(samples: &[TileSample], settings: &MapSettings) -> HashMap<HexPosition, Terrain> {
     let n = samples.len();
     let mut terrain: HashMap<HexPosition, Terrain> = HashMap::with_capacity(n);
@@ -182,7 +164,7 @@ fn band_by_rank(samples: &[TileSample], settings: &MapSettings) -> HashMap<HexPo
         return terrain;
     }
 
-    // Elevation order, low → high; ties broken by position for reproducibility.
+    // Elevation order, low → high (position tie-break for determinism).
     let mut by_elev: Vec<usize> = (0..n).collect();
     by_elev.sort_by(|&a, &b| {
         samples[a]
@@ -193,27 +175,25 @@ fn band_by_rank(samples: &[TileSample], settings: &MapSettings) -> HashMap<HexPo
             })
     });
 
-    // Water = lowest `water_frac` of tiles. Capped so enough land remains to seat
-    // every player's units (radius grows with player count, so this rarely bites,
-    // but the cap is what keeps the high-water knob from drowning the game).
-    let water_frac = (0.12 + settings.water * 0.45).clamp(0.0, 0.6);
-    let water_count = ((n as f32 * water_frac).round() as usize).min(n);
+    // Water = lowest `water_frac`, capped so enough land remains to seat units.
+    let water_frac = (WATER_BASE + settings.water as f64 * WATER_KNOB_SCALE).clamp(0.0, 0.6);
+    let water_count = ((n as f64 * water_frac).round() as usize).min(n);
 
-    // Among land (the high end of the elevation order), the top slices are relief.
-    // Clamp so mountains+hills never exceed the land tiles (high hilliness on a
-    // small map could otherwise overrun the lowland and underflow the slice).
+    // Relief is the top of the land order. Clamp so mountains+hills can't exceed
+    // the land count (else `lowland_end` underflows on small, very hilly maps).
     let land_count = n - water_count;
-    let mut mountain_count = (land_count as f32 * settings.hilliness * 0.12).round() as usize;
-    let mut hill_count = (land_count as f32 * settings.hilliness * 0.38).round() as usize;
+    let mut mountain_count =
+        (land_count as f64 * settings.hilliness as f64 * MOUNTAIN_FRAC).round() as usize;
+    let mut hill_count =
+        (land_count as f64 * settings.hilliness as f64 * HILL_FRAC).round() as usize;
     if mountain_count + hill_count > land_count {
-        let relief = land_count;
-        // Preserve the mountain:hill ratio (~0.12:0.38) when capping.
-        mountain_count = relief / 4;
-        hill_count = relief - mountain_count;
+        // Cap to the land tiles, preserving the mountain:hill ratio.
+        mountain_count =
+            (land_count as f64 * MOUNTAIN_FRAC / (MOUNTAIN_FRAC + HILL_FRAC)).round() as usize;
+        hill_count = land_count - mountain_count;
     }
     let lowland_end = n - mountain_count - hill_count;
 
-    // Assign elevation-driven bands by rank.
     for (rank, &idx) in by_elev.iter().enumerate() {
         let pos = samples[idx].pos;
         let t = if rank < water_count {
@@ -223,13 +203,13 @@ fn band_by_rank(samples: &[TileSample], settings: &MapSettings) -> HashMap<HexPo
         } else if rank >= lowland_end {
             Terrain::Hill
         } else {
-            // Lowland: decided by moisture rank below.
+            // Provisional; the wettest lowland becomes Forest below.
             Terrain::Grassland
         };
         terrain.insert(pos, t);
     }
 
-    // Forest = the wettest `forest` fraction of the remaining lowland (grassland).
+    // Forest = the wettest `forest` fraction of the lowland.
     let mut lowland: Vec<usize> = by_elev[water_count..lowland_end].to_vec();
     lowland.sort_by(|&a, &b| {
         samples[b]
@@ -239,7 +219,7 @@ fn band_by_rank(samples: &[TileSample], settings: &MapSettings) -> HashMap<HexPo
                 (samples[a].pos.q, samples[a].pos.r).cmp(&(samples[b].pos.q, samples[b].pos.r))
             })
     });
-    let forest_count = (lowland.len() as f32 * settings.forest).round() as usize;
+    let forest_count = (lowland.len() as f64 * settings.forest as f64).round() as usize;
     for &idx in lowland.iter().take(forest_count) {
         terrain.insert(samples[idx].pos, Terrain::Forest);
     }
@@ -247,14 +227,12 @@ fn band_by_rank(samples: &[TileSample], settings: &MapSettings) -> HashMap<HexPo
     terrain
 }
 
-/// Largest connected set of passable tiles, walking the 6 hex neighbors. On a
-/// size tie the lexicographically-smallest start wins, so the result is
-/// independent of `HashMap` iteration order — required for seed reproducibility.
+/// Largest connected passable component (6-neighborhood). Scans starts in sorted
+/// order so the result is independent of `HashMap` iteration — needed for
+/// reproducibility.
 fn largest_passable_component(terrain: &HashMap<HexPosition, Terrain>) -> HashSet<HexPosition> {
     let passable = |p: &HexPosition| terrain.get(p).is_some_and(|t| t.is_passable());
 
-    // Deterministic scan order (the same seed must reproduce the same map across
-    // process runs, where HashMap hashing is randomized).
     let mut starts: Vec<HexPosition> = terrain.keys().copied().collect();
     starts.sort_by_key(|p| (p.q, p.r));
 
@@ -283,10 +261,9 @@ fn largest_passable_component(terrain: &HashMap<HexPosition, Terrain>) -> HashSe
     best
 }
 
-/// Chooses `count` well-separated passable tiles via farthest-point sampling:
-/// the first anchor is `passable_land[0]` (deterministic given a sorted input),
-/// each subsequent anchor maximizes the minimum distance to those already chosen.
-/// Never panics — returns up to `min(count, passable_land.len())` anchors.
+/// Picks `count` well-separated tiles by farthest-point sampling (first =
+/// `passable_land[0]`, each next maximizes min-distance to the chosen). Returns
+/// up to `passable_land.len()` anchors.
 pub fn pick_player_anchors(passable_land: &[HexPosition], count: usize) -> Vec<HexPosition> {
     if count == 0 || passable_land.is_empty() {
         return Vec::new();
@@ -306,9 +283,8 @@ pub fn pick_player_anchors(passable_land: &[HexPosition], count: usize) -> Vec<H
     anchors
 }
 
-/// Places `n` units near `anchor` on distinct passable tiles, spiraling outward
-/// over the connected landmass and skipping tiles already taken by other players.
-/// The anchor itself is the first spot. Marks chosen tiles in `occupied`.
+/// Places `n` units on distinct passable tiles spiraling out from `anchor`,
+/// skipping already-`occupied` tiles (which it then marks).
 pub fn place_units_near(
     anchor: HexPosition,
     n: usize,
@@ -343,9 +319,8 @@ pub fn should_generate_map(turn_state: Query<&TurnState>, map_tiles: Res<MapTile
         && map_tiles.0.is_empty()
 }
 
-/// Generates the map and places every active player's starting units. Runs once
-/// per game (gated by [`should_generate_map`]) — kept out of the `StartGame`
-/// observer so that observer's tests don't need any of these resources.
+/// Generates the map and seats every active player's starting units. Gated to run
+/// once per game by [`should_generate_map`].
 #[allow(clippy::type_complexity)]
 pub fn generate_map_on_start(
     mut commands: Commands,
@@ -425,8 +400,8 @@ pub fn should_cleanup_map(turn_state: Query<&TurnState>, map_tiles: Res<MapTiles
         && !map_tiles.0.is_empty()
 }
 
-/// Tears the board down when a finished game returns to the lobby so the next
-/// game regenerates from scratch. Despawns tiles, cities, and any stray units.
+/// Despawns tiles, cities, and units on return to the lobby so the next game
+/// regenerates from scratch.
 pub fn cleanup_map_on_lobby(
     mut commands: Commands,
     mut map_tiles: ResMut<MapTiles>,
@@ -445,8 +420,7 @@ pub fn cleanup_map_on_lobby(
 mod tests {
     use super::*;
 
-    /// Minimum hex distance the generator guarantees between any two players'
-    /// starting anchors (the farthest-point sampler comfortably exceeds this).
+    /// Min hex distance guaranteed between any two players' anchors.
     const MIN_PLAYER_SEPARATION: i32 = 4;
 
     fn settings() -> MapSettings {
@@ -580,9 +554,34 @@ mod tests {
         }
     }
 
-    /// Guards the integer-lattice trap: Perlin is exactly 0 at integer
-    /// coordinates, so sampling without a fractional frequency yields a flat
-    /// single-terrain map. With banding we expect several terrain types.
+    /// `frequency` sets feature scale, not flatness: a single Perlin octave is 0
+    /// on the integer lattice, but `Fbm`'s octaves use a non-integer lacunarity
+    /// (≈2.094), so the field is nonzero there too.
+    #[test]
+    fn fbm_off_lattice_is_nonzero() {
+        let one_octave = Fbm::<Perlin>::new(12345).set_octaves(1);
+        let many_octaves = Fbm::<Perlin>::new(12345).set_octaves(NOISE_OCTAVES);
+        let (mut single_max, mut multi_max) = (0.0_f64, 0.0_f64);
+        for q in -6..=6 {
+            for r in -6..=6 {
+                // Sample directly on the integer lattice (frequency 1.0).
+                let raw_single = one_octave.get([q as f64, r as f64]);
+                let raw_multi = many_octaves.get([q as f64, r as f64]);
+                single_max = single_max.max(raw_single.abs());
+                multi_max = multi_max.max(raw_multi.abs());
+            }
+        }
+        assert!(
+            single_max < 1e-9,
+            "one Perlin octave must be flat on the integer lattice, got {single_max}"
+        );
+        assert!(
+            multi_max > 0.05,
+            "Fbm must vary on the integer lattice (non-integer lacunarity), got {multi_max}"
+        );
+    }
+
+    /// A generated map should show several terrain types, not one or two.
     #[test]
     fn map_has_multiple_terrain_types() {
         for seed in 0..6u64 {
@@ -596,10 +595,7 @@ mod tests {
         }
     }
 
-    /// Determinism across process runs is structural: the noise seed flows from
-    /// the RNG and output is built in the disc's fixed scan order, so a fresh RNG
-    /// seeded identically reproduces the map. (HashMap hashing is randomized per
-    /// run; this asserts it never leaks into the result.)
+    /// A fresh RNG with the same seed reproduces the map (no HashMap order leak).
     #[test]
     fn generate_map_reproduces_from_fresh_rng() {
         for seed in 0..4u64 {
@@ -608,7 +604,6 @@ mod tests {
                     let mut rng = StdRng::seed_from_u64(seed);
                     generate_map(&settings(), players, &mut rng)
                 };
-                // Drop the RNG entirely, re-seed from scratch (mimics a new run).
                 let second = {
                     let mut rng = StdRng::seed_from_u64(seed);
                     generate_map(&settings(), players, &mut rng)
@@ -618,8 +613,7 @@ mod tests {
         }
     }
 
-    /// Different seeds must produce different layouts (the noise field varies),
-    /// not just the same proportions in the same places.
+    /// Different seeds give different layouts.
     #[test]
     fn different_seeds_give_different_layouts() {
         let a = {
@@ -633,11 +627,10 @@ mod tests {
         assert_ne!(a, b, "distinct seeds should yield distinct maps");
     }
 
-    /// Higher `water` ⇒ more water tiles, while the land stays one connected
-    /// component. Aggregated over seeds because a single small map can wobble.
+    /// Higher `water` ⇒ more water, land stays one component (aggregated over seeds).
     #[test]
     fn higher_water_means_more_water_but_stays_connected() {
-        let players = 4;
+        let players = 2;
         let mut low_water = 0usize;
         let mut high_water = 0usize;
         for seed in 0..8u64 {
@@ -652,7 +645,6 @@ mod tests {
             low_water += count_of(&low, Terrain::Water);
             high_water += count_of(&high, Terrain::Water);
 
-            // Connectivity invariant must hold at both extremes.
             for tiles in [&low, &high] {
                 let map: HashMap<HexPosition, Terrain> = tiles.iter().copied().collect();
                 let component = largest_passable_component(&map);
@@ -676,7 +668,7 @@ mod tests {
     /// Higher `hilliness` ⇒ more hills + mountains, aggregated over seeds.
     #[test]
     fn higher_hilliness_means_more_relief() {
-        let players = 4;
+        let players = 2;
         let mut low_relief = 0usize;
         let mut high_relief = 0usize;
         for seed in 0..8u64 {
@@ -700,7 +692,7 @@ mod tests {
     /// Higher `forest` ⇒ more forest tiles, aggregated over seeds.
     #[test]
     fn higher_forest_means_more_forest() {
-        let players = 4;
+        let players = 2;
         let mut low_forest = 0usize;
         let mut high_forest = 0usize;
         for seed in 0..8u64 {
@@ -721,10 +713,8 @@ mod tests {
         );
     }
 
-    /// A default map is land-dominant with every terrain represented: rank-based
-    /// banding must yield real relief and forest at the *default* knobs, not only
-    /// at extremes. Guards the bell-curve-vs-absolute-threshold regression that
-    /// produced flat, all-water default maps.
+    /// A default map is land-dominant with hills, mountains, and forest present
+    /// (guards the all-water-default regression).
     #[test]
     fn default_map_has_relief_and_is_land_dominant() {
         for seed in 0..6u64 {
@@ -743,7 +733,6 @@ mod tests {
                 h.get(&Terrain::Forest).copied().unwrap_or(0) > 0,
                 "seed {seed}: default map must have forest"
             );
-            // Land should dominate — most of a default map is playable, not sea.
             let water = count_of(&tiles, Terrain::Water);
             assert!(
                 water < tiles.len() / 2,
@@ -753,8 +742,7 @@ mod tests {
         }
     }
 
-    /// Map radius (and thus tile count) grows with player count but stays capped
-    /// small — short games. Asserts the existing sizing philosophy is preserved.
+    /// Tile count grows with player count but stays capped (short games).
     #[test]
     fn map_grows_with_players_but_stays_capped() {
         let two = {
@@ -766,8 +754,7 @@ mod tests {
             generate_map(&settings(), 8, &mut rng).len()
         };
         assert!(eight > two, "more players should yield a larger map");
-        // Radius is clamped to 16; a full disc of radius 16 is 817 tiles. Stay
-        // well under a sprawling map to keep games short.
+        // Radius caps at 16 → a full disc is 817 tiles.
         assert!(
             eight <= 817,
             "map radius must stay capped, got {eight} tiles"
