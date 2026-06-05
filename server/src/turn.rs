@@ -5,7 +5,7 @@ use bevy_replicon::prelude::*;
 use shared::cities::{City, CityOwner};
 use shared::events::StartGame;
 use shared::events::*;
-use shared::unit_definition::{UnitRegistry, is_within_move_range};
+use shared::unit_definition::{UnitRegistry, is_reachable, is_within_move_range};
 use shared::unit_definition::{available_verbs, is_within_attack_range};
 use shared::units::*;
 use shared::{components::*, hex::HexPosition};
@@ -234,26 +234,21 @@ pub fn handle_unit_action(
 
     match &trigger.message.action {
         UnitAction::Move { target } => {
-            if !is_within_move_range(pos, target, def.move_budget) {
-                println!("Rejected move: out of range");
+            // Reachability check. When the map is present, terrain-aware
+            // reachability (shared with the client preview) is the single source
+            // of truth: it accumulates per-step terrain cost over passable tiles
+            // within the move budget, so it subsumes both the old flat-distance
+            // range check AND the on-map + impassable-terrain guard (off-map and
+            // water/mountain tiles are simply never reachable). The map doubles as
+            // the tile set and the terrain lookup. When MapTiles is absent (the
+            // observer's unit tests), fall back to the old flat distance check.
+            let reachable = match &map_tiles {
+                Some(map_tiles) => is_reachable(pos, target, def, |p| map_tiles.0.get(p).copied()),
+                None => is_within_move_range(pos, target, def.move_budget),
+            };
+            if !reachable {
+                println!("Rejected move: target not reachable");
                 return;
-            }
-            // Reject moves off the map or onto impassable terrain (water/mountain).
-            // Per-terrain movement *cost* is layered on top of this by later work;
-            // this guard is what makes the generator's connected-landmass guarantee
-            // meaningful. Optional so the observer's unit tests can omit the map.
-            if let Some(map_tiles) = &map_tiles {
-                match map_tiles.0.get(target) {
-                    None => {
-                        println!("Rejected move: target tile not on map");
-                        return;
-                    }
-                    Some(terrain) if !terrain.is_passable() => {
-                        println!("Rejected move: target terrain is impassable");
-                        return;
-                    }
-                    Some(_) => {}
-                }
             }
             // Reject if a friendly is currently standing on the target tile.
             if units
@@ -1144,6 +1139,15 @@ mod tests {
         ));
 
         let warrior_type = UnitTypeId(0);
+        // Real land costs: with MapTiles present the terrain-aware reachability
+        // path fires, and that path uses terrain_cost as the source of truth — an
+        // empty map would make every terrain unenterable, so the warrior needs the
+        // canonical land costs (grassland 1, hill 2, forest 2, mountain sentinel).
+        let mut terrain_cost = HashMap::new();
+        terrain_cost.insert("grassland".to_string(), 1);
+        terrain_cost.insert("hill".to_string(), 2);
+        terrain_cost.insert("forest".to_string(), 2);
+        terrain_cost.insert("mountain".to_string(), 99999);
         let warrior_def = UnitDefinition {
             hp: 10,
             move_budget: 2,
@@ -1152,7 +1156,7 @@ mod tests {
             gold_upkeep: 1,
             production_cost: 10,
             build_targets: vec![],
-            terrain_cost: HashMap::new(),
+            terrain_cost,
         };
         let mut registry = UnitRegistry::default();
         registry
@@ -1164,11 +1168,15 @@ mod tests {
         app.init_resource::<PlayerState>();
         app.init_resource::<PlayerMap>();
 
-        // (1,0) is impassable water, (2,0) is passable land; both within budget 2.
+        // Start at (0,0). (1,0) is impassable water — unenterable AND can't be
+        // pathed through, so (2,0) grassland is unreachable (its only on-map
+        // neighbor is the water). (0,1) is passable grassland adjacent to the
+        // start, so it IS reachable within budget 2.
         let mut map = HashMap::new();
         map.insert(HexPosition::new(0, 0), Terrain::Grassland);
         map.insert(HexPosition::new(1, 0), Terrain::Water);
         map.insert(HexPosition::new(2, 0), Terrain::Grassland);
+        map.insert(HexPosition::new(0, 1), Terrain::Grassland);
         app.insert_resource(MapTiles(map));
         app.add_observer(handle_unit_action);
         app.update();
@@ -1218,7 +1226,126 @@ mod tests {
             "move onto impassable water must be rejected"
         );
 
-        // Move onto passable land within range must be accepted.
+        // Move onto passable land reachable within budget must be accepted.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(0, 1),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
+            app.world().get::<MoveTo>(unit).is_some(),
+            "move onto reachable passable land must be accepted"
+        );
+
+        // Land that is on the map but only reachable through water stays
+        // rejected — you can't path through impassable terrain.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(2, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        let mt = app
+            .world()
+            .get::<MoveTo>(unit)
+            .expect("prior accepted move must remain queued");
+        assert_eq!(
+            mt.pos,
+            HexPosition::new(0, 1),
+            "land reachable only through water must be rejected, leaving the prior move intact"
+        );
+    }
+
+    #[test]
+    fn test_handle_unit_action_move_respects_terrain_cost_budget() {
+        use crate::map_gen::MapTiles;
+        use shared::terrain::Terrain;
+        use std::collections::HashMap;
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins.set(ScheduleRunnerPlugin::run_once()),
+            StatesPlugin,
+            RepliconPlugins,
+        ));
+
+        let warrior_type = UnitTypeId(0);
+        let mut terrain_cost = HashMap::new();
+        terrain_cost.insert("grassland".to_string(), 1);
+        terrain_cost.insert("hill".to_string(), 2);
+        terrain_cost.insert("forest".to_string(), 2);
+        terrain_cost.insert("mountain".to_string(), 99999);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost,
+        };
+        let mut registry = UnitRegistry::default();
+        registry
+            .name_to_id
+            .insert("warrior".to_string(), warrior_type);
+        registry.definitions.insert(warrior_type, warrior_def);
+
+        app.insert_resource(registry);
+        app.init_resource::<PlayerState>();
+        app.init_resource::<PlayerMap>();
+
+        // A straight line of grassland east. (1,0)=hill costs 2 to enter (==budget,
+        // reachable), but spends the whole budget so (2,0) beyond it is NOT
+        // reachable, even though it's flat-distance 2 (which the old check allowed).
+        let mut map = HashMap::new();
+        map.insert(HexPosition::new(0, 0), Terrain::Grassland);
+        map.insert(HexPosition::new(1, 0), Terrain::Hill);
+        map.insert(HexPosition::new(2, 0), Terrain::Grassland);
+        app.insert_resource(MapTiles(map));
+        app.add_observer(handle_unit_action);
+        app.update();
+
+        let (client, unit) = {
+            let world = app.world_mut();
+            world.spawn(TurnState {
+                phase: TurnPhase::Accepting,
+                turn_number: 1,
+            });
+            let player = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let client = world.spawn_empty().id();
+            world
+                .resource_mut::<PlayerMap>()
+                .client_to_player
+                .insert(client, player);
+            let unit = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_type,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(player),
+                ))
+                .id();
+            (client, unit)
+        };
+
+        // (2,0) is flat-distance 2 but costs 1(hill enter? no) — path is
+        // hill(2)+grass(1)=3 > budget 2, so it must be rejected.
         app.world_mut().trigger(FromClient {
             client_id: ClientId::Client(client),
             message: UnitActionEvent {
@@ -1230,8 +1357,24 @@ mod tests {
         });
         app.world_mut().flush();
         assert!(
+            app.world().get::<MoveTo>(unit).is_none(),
+            "tile past a budget-exhausting hill must be rejected despite flat-distance 2"
+        );
+
+        // The hill itself (cost exactly 2 == budget) must be accepted.
+        app.world_mut().trigger(FromClient {
+            client_id: ClientId::Client(client),
+            message: UnitActionEvent {
+                unit,
+                action: UnitAction::Move {
+                    target: HexPosition::new(1, 0),
+                },
+            },
+        });
+        app.world_mut().flush();
+        assert!(
             app.world().get::<MoveTo>(unit).is_some(),
-            "move onto passable land within range must be accepted"
+            "entering a hill at cost == budget must be accepted"
         );
     }
 
