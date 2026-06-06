@@ -244,9 +244,6 @@ pub fn finish_turn_trigger_system(
     if local_player_game_over(&controller, &defeated, &victorious) {
         return;
     }
-    if local_player_game_over(&controller, &defeated, &victorious) {
-        return;
-    }
     let Ok(state) = turn_state.single() else {
         return;
     };
