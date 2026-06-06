@@ -171,10 +171,7 @@ fn connect_to_server(
 use bevy_replicon_renet2::netcode::{WebSocketClient, WebSocketClientConfig};
 
 #[cfg(target_arch = "wasm32")]
-fn connect_to_server(
-    mut commands: Commands,
-    channels: Res<RepliconChannels>,
-) -> Result<()> {
+fn connect_to_server(mut commands: Commands, channels: Res<RepliconChannels>) -> Result<()> {
     // The URL and `server_addr` must agree: WebSocketClient::send rejects any packet
     // whose destination differs from the address derived from the URL.
     //

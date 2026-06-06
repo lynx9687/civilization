@@ -72,8 +72,8 @@ pub fn zoom_camera_with_scroll(
 
     if scroll.delta.y != 0.0 {
         let scroll_lines = match scroll.unit {
-            MouseScrollUnit::Line => scroll.delta.y,                            //used in native client
-            MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_SCROLL_LINE,  //used in web client
+            MouseScrollUnit::Line => scroll.delta.y, //used in native client
+            MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_SCROLL_LINE, //used in web client
         };
         let zoom_multiplier = CAMERA_ZOOM_FACTOR.powf(-scroll_lines);
 
