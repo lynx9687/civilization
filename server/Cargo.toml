@@ -9,3 +9,6 @@ bevy_replicon.workspace = true
 bevy_replicon_renet.workspace = true
 shared = { path = "../shared" }
 rand = "0.8"
+# Coherent elevation/moisture fields for banded terrain; seeded by a u32 so the
+# map reproduces across process runs (see map_gen.rs determinism guarantee).
+noise = "0.9"
