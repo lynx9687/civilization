@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub const ASSET_DIR_ENV: &str = "CIVILIZATION_ASSET_DIR";
 
 /// Finds the runtime asset directory for both packaged releases and local development.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn assets_dir() -> PathBuf {
     if let Some(path) = std::env::var_os(ASSET_DIR_ENV) {
         return PathBuf::from(path);
@@ -26,4 +27,10 @@ pub fn assets_dir() -> PathBuf {
     }
 
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets")
+}
+
+/// Assets dir for web
+#[cfg(target_arch = "wasm32")]
+pub fn assets_dir() -> PathBuf {
+    PathBuf::from("./assets")
 }

@@ -54,7 +54,7 @@ pub fn handle_new_clients(
 
             let client_id = ClientId::Client(client_entity);
             commands.server_trigger(ToClients {
-                mode: SendMode::Direct(client_id),
+                targets: SendTargets::Single(client_id),
                 message: YourPlayer {
                     player_entity: waiting_entity,
                 },
@@ -95,7 +95,7 @@ pub fn handle_new_clients(
 
         let client_id = ClientId::Client(client_entity);
         commands.server_trigger(ToClients {
-            mode: SendMode::Direct(client_id),
+            targets: SendTargets::Single(client_id),
             message: YourPlayer { player_entity },
         });
 

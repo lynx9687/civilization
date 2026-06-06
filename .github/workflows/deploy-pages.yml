@@ -1,0 +1,76 @@
+name: Deploy web client to Pages
+
+on:
+  push:
+    branches: [main, web_client]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; cancel in-progress runs for the same group.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The wasm-bindgen-cli version must match the wasm-bindgen lib in Cargo.lock.
+      - name: Install wasm-bindgen-cli
+        run: |
+          VERSION=$(grep -A1 'name = "wasm-bindgen"' Cargo.lock \
+            | grep version | head -1 | cut -d'"' -f2)
+          echo "wasm-bindgen version: $VERSION"
+          cargo install wasm-bindgen-cli --version "$VERSION"
+
+      # The deployed page is served over HTTPS, so it must reach the server over
+      # wss:// (browsers block ws:// from an HTTPS page). The `wss` feature selects
+      # the TLS WebSocket endpoint instead of localhost ws://.
+      - name: Build client (release)
+        run: cargo build -p client --release --target wasm32-unknown-unknown --features wss
+
+      - name: Generate JS bindings
+        run: |
+          wasm-bindgen --no-typescript --target web \
+            --out-dir ./web-client/ --out-name client \
+            ./target/wasm32-unknown-unknown/release/client.wasm
+
+      # Use the same binaryen version as the working local build. Ubuntu's apt
+      # binaryen is older and mis-optimizes wasm-bindgen's externref table, causing a
+      # runtime "failed to grow table" RangeError in __wbindgen_init_externref_table.
+      - name: Optimize wasm
+        run: |
+          BINARYEN=version_130
+          curl -sSL "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN}/binaryen-${BINARYEN}-x86_64-linux.tar.gz" | tar xz
+          ./binaryen-${BINARYEN}/bin/wasm-opt -Oz \
+            -o ./web-client/client_bg.wasm ./web-client/client_bg.wasm
+
+      - name: Copy assets
+        run: mkdir ./web-client/assets; cp -r assets/* ./web-client/assets/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./web-client
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

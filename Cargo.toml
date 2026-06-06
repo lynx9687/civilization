@@ -4,10 +4,11 @@ resolver = "2"
 
 [workspace.dependencies]
 bevy = "0.18"
-bevy_replicon = "0.39"
-bevy_replicon_renet = "0.15"
+bevy_replicon = "0.40"
+bevy_replicon_renet2 = "0.16"
 serde = { version = "1.0", features = ["derive"] }
 ron = "0.8"
+getrandom = { version = "0.2.17", features = ["js"]}
 
 [profile.dev]
 opt-level = 1

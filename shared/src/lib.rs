@@ -4,6 +4,7 @@ pub mod components;
 pub mod events;
 pub mod hex;
 pub mod map_settings;
+pub mod net;
 pub mod plugin;
 pub mod production;
 pub mod terrain;

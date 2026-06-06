@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::assets::assets_dir;
 use crate::tiles::TileResources;
 
@@ -88,17 +89,13 @@ impl TerrainTable {
     }
 
     /// Parses a `name -> TileResources` RON map and resolves the names to
-    /// [`Terrain`] variants.
-    pub fn load_from_file(path: &std::path::Path) -> Result<Self, TerrainLoadError> {
-        let contents = std::fs::read_to_string(path).map_err(|e| TerrainLoadError::Io {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+    /// [`Terrain`] variants. `path` is used only for error context.
+    pub fn from_ron_str(
+        contents: &str,
+        path: std::path::PathBuf,
+    ) -> Result<Self, TerrainLoadError> {
         let by_name: HashMap<String, TileResources> =
-            ron::from_str(&contents).map_err(|e| TerrainLoadError::Parse {
-                path: path.to_path_buf(),
-                source: e,
-            })?;
+            ron::from_str(contents).map_err(|e| TerrainLoadError::Parse { path, source: e })?;
         let mut yields = HashMap::new();
         for (name, res) in by_name {
             let terrain =
@@ -106,6 +103,16 @@ impl TerrainTable {
             yields.insert(terrain, res);
         }
         Ok(TerrainTable { yields })
+    }
+
+    /// Reads and parses the terrain table from a `.ron` file (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self, TerrainLoadError> {
+        let contents = std::fs::read_to_string(path).map_err(|e| TerrainLoadError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+        Self::from_ron_str(&contents, path.to_path_buf())
     }
 }
 
@@ -141,17 +148,25 @@ impl std::error::Error for TerrainLoadError {}
 /// Startup system that loads `TerrainTable` from the runtime assets directory.
 /// Registered by `SharedPlugin` so both server and client get it for free.
 pub fn load_terrain_table(mut commands: Commands) {
-    let path = assets_dir().join("terrain.ron");
-    match TerrainTable::load_from_file(&path) {
+    // Native reads the runtime assets directory; wasm has no filesystem, so it uses
+    // the table embedded into the binary at compile time.
+    #[cfg(not(target_arch = "wasm32"))]
+    let result = TerrainTable::load_from_file(&assets_dir().join("terrain.ron"));
+    #[cfg(target_arch = "wasm32")]
+    let result = TerrainTable::from_ron_str(
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/terrain.ron"
+        )),
+        std::path::PathBuf::from("terrain.ron"),
+    );
+
+    match result {
         Ok(table) => {
-            println!(
-                "Loaded {} terrain definitions from {}",
-                table.len(),
-                path.display()
-            );
+            println!("Loaded {} terrain definitions", table.len());
             commands.insert_resource(table);
         }
-        Err(e) => panic!("Failed to load terrain table from {}: {e}", path.display()),
+        Err(e) => panic!("Failed to load terrain table: {e}"),
     }
 }
 

@@ -5,19 +5,23 @@ mod lobby;
 mod ui;
 mod visuals;
 
-use std::{
-    net::{Ipv4Addr, SocketAddr, UdpSocket},
-    time::SystemTime,
-};
+use std::net::SocketAddr;
+// web-time re-exports std on native; on wasm it uses the browser clock, since
+// std::time::SystemTime::now() is unimplemented (and panics) there.
+use web_time::SystemTime;
+
+// UDP is only used by the native transport; the wasm build connects over WebSocket.
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::{Ipv4Addr, UdpSocket};
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use bevy_replicon_renet::{
-    RenetChannelsExt, RenetClient, RepliconRenetPlugins,
-    netcode::{ClientAuthentication, NetcodeClientTransport},
-    renet::ConnectionConfig,
+use bevy_replicon_renet2::{
+    RenetChannelsExt, RepliconRenetPlugins,
+    netcode::{ClientAuthentication, ClientSocket, NetcodeClientTransport},
+    renet2::{ConnectionConfig, RenetClient},
 };
-use shared::{assets::assets_dir, events::*, map_settings::MapSettings, plugin::SharedPlugin};
+use shared::{assets::assets_dir, events::*, map_settings::MapSettings, net, plugin::SharedPlugin};
 
 use audio::*;
 use camera::*;
@@ -26,27 +30,40 @@ use lobby::*;
 use ui::*;
 use visuals::*;
 
-const PROTOCOL_ID: u64 = 0;
 const HEX_SIZE: f32 = 40.0;
 
 #[derive(Resource)]
+// On wasm the WebSocket endpoint is hardcoded, so this field isn't read
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct ServerAddr(SocketAddr);
 
 fn main() {
-    let addr_str = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "158.180.62.178:8080".to_string());
-    let addr: SocketAddr = addr_str.parse().expect("Invalid server address");
+    let addr: SocketAddr = match std::env::args().nth(1) {
+        Some(s) => s.parse().expect("Invalid server address"),
+        None => net::DEFAULT_SERVER_ADDR,
+    };
 
     println!("Connecting to server at {addr}");
     let asset_path = assets_dir();
 
     App::new()
         .add_plugins((
-            DefaultPlugins.set(AssetPlugin {
-                file_path: asset_path.to_string_lossy().into_owned(),
-                ..default()
-            }),
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: asset_path.to_string_lossy().into_owned(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        // On web, attach to our own canvas and track its parent's
+                        // size so the game fills the page. Both fields are no-ops on
+                        // native, so this is safe to set unconditionally.
+                        canvas: Some("#game-canvas".into()),
+                        fit_canvas_to_parent: true,
+                        ..default()
+                    }),
+                    ..default()
+                }),
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedPlugin,
@@ -74,29 +91,83 @@ fn main() {
         .run();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+use bevy_replicon_renet2::netcode::NativeSocket;
+
+#[cfg(not(target_arch = "wasm32"))]
 fn connect_to_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
     addr: Res<ServerAddr>,
 ) -> Result<()> {
+    let socket = NativeSocket::new(UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?)?;
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
 
-    let client = RenetClient::new(ConnectionConfig {
-        server_channels_config,
-        client_channels_config,
-        ..Default::default()
-    });
+    let client = RenetClient::new(
+        ConnectionConfig::from_channels(server_channels_config, client_channels_config),
+        socket.is_reliable(),
+    );
 
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
     let client_id = current_time.as_millis() as u64;
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
-        protocol_id: PROTOCOL_ID,
+        socket_id: net::UDP_SOCKET_ID,
+        protocol_id: net::PROTOCOL_ID,
         server_addr: addr.0,
+        user_data: None,
+    };
+    let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;
+
+    commands.insert_resource(client);
+    commands.insert_resource(transport);
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+use bevy_replicon_renet2::netcode::{WebSocketClient, WebSocketClientConfig};
+
+#[cfg(target_arch = "wasm32")]
+fn connect_to_server(mut commands: Commands, channels: Res<RepliconChannels>) -> Result<()> {
+    // The URL and `server_addr` must agree: WebSocketClient::send rejects any packet
+    // whose destination differs from the address derived from the URL.
+    //
+    // Dev (default): plain ws:// to localhost, addressed by its real SocketAddr.
+    // Prod (feature "wss"): TLS WebSocket via Caddy, reached by domain. A domain has
+    // no SocketAddr, so netcode uses the dummy 0.0.0.0:0 on both ends (the client's
+    // WebSocketClient derives the same dummy for a domain host, and the server's
+    // socket_addresses[1] is set to match).
+    #[cfg(not(feature = "wss"))]
+    let (url_str, server_addr) = (format!("ws://{}", net::LOCAL_WS_ADDR), net::LOCAL_WS_ADDR);
+    #[cfg(feature = "wss")]
+    let (url_str, server_addr) = (
+        format!("wss://{}", net::DEPLOY_SERVER_DOMAIN),
+        SocketAddr::from(([0, 0, 0, 0], 0)),
+    );
+
+    let server_url = url::Url::parse(&url_str)?;
+    let socket = WebSocketClient::new(WebSocketClientConfig { server_url })
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let server_channels_config = channels.server_configs();
+    let client_channels_config = channels.client_configs();
+
+    let client = RenetClient::new(
+        ConnectionConfig::from_channels(server_channels_config, client_channels_config),
+        socket.is_reliable(),
+    );
+
+    let current_time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    let client_id = current_time.as_millis() as u64;
+    let authentication = ClientAuthentication::Unsecure {
+        client_id,
+        socket_id: net::WS_SOCKET_ID,
+        protocol_id: net::PROTOCOL_ID,
+        server_addr,
         user_data: None,
     };
     let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;
