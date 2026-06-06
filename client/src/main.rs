@@ -92,6 +92,10 @@ fn main() {
                 (
                     move_camera_with_keyboard,
                     zoom_camera_with_scroll,
+                    sync_ownership_borders,
+                    spawn_ownership_borders,
+                    update_ownership_border_colors,
+                    cleanup_ownership_border_visuals,
                     update_hex_highlights,
                     handle_left_click,
                     handle_right_click,

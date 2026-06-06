@@ -65,6 +65,25 @@ pub const PLAYER_COLORS: [Color; 8] = [
     Color::srgb(0.6, 0.2, 0.9), // purple
 ];
 
+pub const PLAYER_BORDER_COLORS: [Color; 8] = [
+    Color::srgba(0.9, 0.2, 0.2, 0.25),
+    Color::srgba(0.2, 0.4, 0.9, 0.25),
+    Color::srgba(0.2, 0.8, 0.2, 0.25),
+    Color::srgba(0.9, 0.9, 0.2, 0.25),
+    Color::srgba(0.9, 0.2, 0.9, 0.25),
+    Color::srgba(0.2, 0.9, 0.9, 0.25),
+    Color::srgba(0.9, 0.6, 0.2, 0.25),
+    Color::srgba(0.6, 0.2, 0.9, 0.25),
+];
+
 pub fn player_color(index: u8) -> Color {
     PLAYER_COLORS[index as usize % PLAYER_COLORS.len()]
+}
+
+/// Marker component for hex tiles that should display an ownership border.
+/// Attached when a city claims a tile. Used by the client to render a subtle
+/// border indicating city ownership while preserving terrain visibility.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct OwnershipBorder {
+    pub color_index: u8,
 }

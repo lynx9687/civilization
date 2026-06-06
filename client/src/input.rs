@@ -120,7 +120,6 @@ pub fn update_hex_highlights(
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
-    players: Query<&Player>,
 ) {
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
@@ -197,21 +196,20 @@ pub fn update_hex_highlights(
         }
     };
 
-    for (pos, owner, terrain, mut material) in &mut tiles {
+    for (pos, _owner, terrain, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
-            *material = MeshMaterial2d(hex_materials.hovered.clone());
+            // Apply terrain-specific hover material.
+            let hover = terrain
+                .map(|t| hex_materials.hovered[*t as usize].clone())
+                .unwrap_or_else(|| hex_materials.default.clone());
+            *material = MeshMaterial2d(hover);
         } else if attack_targets.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_attack.clone());
         } else if move_targets.contains(pos) {
             *material = MeshMaterial2d(hex_materials.valid_move.clone());
-        } else if let Some(tile_owning_player) = owner.and_then(|x| x.player_entity) {
-            let Ok(owning_player) = players.get(tile_owning_player) else {
-                continue;
-            };
-            *material =
-                MeshMaterial2d(hex_materials.claimed[owning_player.color_index as usize].clone());
         } else {
             // Unhighlighted tiles repaint to their terrain's base material.
+            // Ownership is indicated by a border mesh (OwnershipBorder), not by color override.
             let base = terrain
                 .map(|t| hex_materials.terrain_material(*t))
                 .unwrap_or_else(|| hex_materials.default.clone());
