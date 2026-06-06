@@ -21,7 +21,7 @@ use bevy_replicon_renet2::{
     netcode::{ClientAuthentication, ClientSocket, NetcodeClientTransport},
     renet2::{ConnectionConfig, RenetClient},
 };
-use shared::{assets::assets_dir, events::*, map_settings::MapSettings, plugin::SharedPlugin};
+use shared::{assets::assets_dir, events::*, map_settings::MapSettings, net, plugin::SharedPlugin};
 
 use audio::*;
 use camera::*;
@@ -30,20 +30,18 @@ use lobby::*;
 use ui::*;
 use visuals::*;
 
-const PROTOCOL_ID: u64 = 0;
 const HEX_SIZE: f32 = 40.0;
 
 #[derive(Resource)]
-// On wasm the WebSocket endpoint is currently hardcoded, so this field isn't read
-// there yet; native still uses it. Remove once wasm derives its address from here.
+// On wasm the WebSocket endpoint is hardcoded, so this field isn't read
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct ServerAddr(SocketAddr);
 
 fn main() {
-    let addr_str = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "158.180.62.178:8080".to_string());
-    let addr: SocketAddr = addr_str.parse().expect("Invalid server address");
+    let addr: SocketAddr = match std::env::args().nth(1) {
+        Some(s) => s.parse().expect("Invalid server address"),
+        None => net::DEFAULT_SERVER_ADDR,
+    };
 
     println!("Connecting to server at {addr}");
     let asset_path = assets_dir();
@@ -157,8 +155,8 @@ fn connect_to_server(
     let client_id = current_time.as_millis() as u64;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
-        socket_id: 0,
-        protocol_id: PROTOCOL_ID,
+        socket_id: net::UDP_SOCKET_ID,
+        protocol_id: net::PROTOCOL_ID,
         server_addr: addr.0,
         user_data: None,
     };
@@ -176,9 +174,6 @@ use bevy_replicon_renet2::netcode::{WebSocketClient, WebSocketClientConfig};
 fn connect_to_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
-    // ServerAddr holds the deployment (UDP) address; the local WebSocket endpoint is
-    // hardcoded below for now, so the resource is intentionally unused here.
-    _addr: Res<ServerAddr>,
 ) -> Result<()> {
     // The URL and `server_addr` must agree: WebSocketClient::send rejects any packet
     // whose destination differs from the address derived from the URL.
@@ -189,18 +184,12 @@ fn connect_to_server(
     // WebSocketClient derives the same dummy for a domain host, and the server's
     // socket_addresses[1] is set to match).
     #[cfg(not(feature = "wss"))]
-    let (url_str, server_addr) = {
-        let ws_addr: SocketAddr = "127.0.0.1:8081".parse().unwrap();
-        (format!("ws://{ws_addr}"), ws_addr)
-    };
+    let (url_str, server_addr) = (format!("ws://{}", net::LOCAL_WS_ADDR), net::LOCAL_WS_ADDR);
     #[cfg(feature = "wss")]
-    let (url_str, server_addr) = {
-        const SERVER_DOMAIN: &str = "158-180-62-178.sslip.io";
-        (
-            format!("wss://{SERVER_DOMAIN}"),
-            SocketAddr::from(([0, 0, 0, 0], 0)),
-        )
-    };
+    let (url_str, server_addr) = (
+        format!("wss://{}", net::DEPLOY_SERVER_DOMAIN),
+        SocketAddr::from(([0, 0, 0, 0], 0)),
+    );
 
     let server_url = url::Url::parse(&url_str)?;
     let socket = WebSocketClient::new(WebSocketClientConfig { server_url })
@@ -219,9 +208,8 @@ fn connect_to_server(
     let client_id = current_time.as_millis() as u64;
     let authentication = ClientAuthentication::Unsecure {
         client_id,
-        // Socket 1 on the server is the WebSocket transport (socket 0 is UDP).
-        socket_id: 1,
-        protocol_id: PROTOCOL_ID,
+        socket_id: net::WS_SOCKET_ID,
+        protocol_id: net::PROTOCOL_ID,
         server_addr,
         user_data: None,
     };

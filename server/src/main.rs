@@ -21,7 +21,7 @@ use bevy_replicon_renet2::{
     },
     renet2::{ConnectionConfig, RenetServer},
 };
-use shared::{components::*, map_settings::MapSettings, plugin::SharedPlugin};
+use shared::{components::*, map_settings::MapSettings, net, plugin::SharedPlugin};
 
 use cities::*;
 use cities_systems::*;
@@ -33,16 +33,14 @@ use map_gen::{
 use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
 use turn::*;
 
-const PROTOCOL_ID: u64 = 0;
-
 #[derive(Resource)]
 struct BindAddr(SocketAddr);
 
 fn main() {
-    let addr_str = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
-    let addr: SocketAddr = addr_str.parse().expect("Invalid bind address");
+    let addr: SocketAddr = match std::env::args().nth(1) {
+        Some(s) => s.parse().expect("Invalid bind address"),
+        None => net::DEFAULT_BIND_ADDR,
+    };
 
     println!("Starting server on {addr}");
 
@@ -124,8 +122,8 @@ fn start_server(
     // The WebSocket transport runs its accept/read/write loops on a tokio runtime;
     // we keep that runtime alive for the app's lifetime by storing it as a resource
     // (dropping it would shut down the worker threads and kill all WS connections).
-    // It listens on the same IP as UDP, one port higher.
-    let ws_addr = SocketAddr::new(addr.0.ip(), addr.0.port() + 1);
+    // It binds the same IP as UDP, on the shared WebSocket port.
+    let ws_addr = SocketAddr::new(addr.0.ip(), net::GAME_WS_PORT);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -155,7 +153,7 @@ fn start_server(
             acceptor,
             // Always bind the real local address; Caddy connects here over plain ws.
             listen: ws_addr,
-            max_clients: 8,
+            max_clients: net::MAX_CLIENTS,
         },
         runtime.handle().clone(),
     )
@@ -163,8 +161,8 @@ fn start_server(
 
     let server_config = ServerSetupConfig {
         current_time,
-        max_clients: 8,
-        protocol_id: PROTOCOL_ID,
+        max_clients: net::MAX_CLIENTS,
+        protocol_id: net::PROTOCOL_ID,
         // renet2 supports multiple sockets per server; the outer Vec is indexed
         // by socket id. Socket 0 is UDP, socket 1 is WebSocket. Clients pick the
         // matching socket id in their ClientAuthentication. socket_addresses[1]
