@@ -10,7 +10,7 @@ Then run a local http server from `./web-client`:
 cd web-client
 python3 -m http.server
 ```
-Web client should be reachable at [label](http://127.0.0.1:8000/) from any browser. You also need to start local game server. 
+Web client should be reachable at <http://127.0.0.1:8000/> from any browser. You also need to start a local game server. 
 
 ## Music Copyright
 Music composed by AIVA - Artificial Intelligence Virtual Artist (https://www.aiva.ai)
