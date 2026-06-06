@@ -574,34 +574,28 @@ pub fn action_button_visual_system(
 ) {
     let thm = &theme::FINISH_BUTTON;
 
-    for (verb_button, _production_button, interaction, mut bg, mut border) in &mut buttons {
-        let disabled = if let Some(VerbButton(verb)) = verb_button {
+    let is_disabled_verb = |verb_button: Option<&VerbButton>| -> bool {
+        if let Some(VerbButton(verb)) = verb_button {
             let unit_entity = match ui_state.selection() {
                 Some(InputSelection::UnitSelected { unit }) => *unit,
                 Some(InputSelection::Targeting { unit, .. }) => *unit,
-                _ => {
-                    *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
-                    *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
-                    continue;
-                }
+                _ => return false,
             };
 
             let Ok(unit) = units.get(unit_entity) else {
-                *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
-                *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
-                continue;
+                return false;
             };
             let Some(def) = registry.get(&unit.type_id) else {
-                *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
-                *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
-                continue;
+                return false;
             };
             !available_verbs(def).contains(verb)
         } else {
             false
-        };
+        }
+    };
 
-        if disabled {
+    for (verb_button, _production_button, interaction, mut bg, mut border) in &mut buttons {
+        if is_disabled_verb(verb_button) {
             *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
             *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
             continue;
