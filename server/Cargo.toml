@@ -11,3 +11,6 @@ shared = { path = "../shared" }
 rand = "0.8"
 # WebSocket server transport runs its accept/read/write loops on a tokio runtime.
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# Coherent elevation/moisture fields for banded terrain; seeded by a u32 so the
+# map reproduces across process runs (see map_gen.rs determinism guarantee).
+noise = "0.9"
