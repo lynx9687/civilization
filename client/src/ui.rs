@@ -8,9 +8,10 @@ use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;
 
 use crate::input::{
-    Controller, LastSubmittedTurn, TargetableVerb, UiState, local_player_defeated,
+    Controller, InputSelection, LastSubmittedTurn, TargetableVerb, UiState, local_player_defeated,
     local_player_game_over, local_player_victorious,
 };
+use crate::visuals::theme;
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -23,6 +24,9 @@ pub struct CityUiText;
 
 #[derive(Component)]
 pub struct ActionBar;
+
+#[derive(Component)]
+pub struct ActionButton;
 
 #[derive(Component)]
 pub struct VerbButton(pub UnitVerb);
@@ -60,21 +64,28 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             FinishTurnButton,
             Button,
             Node {
-                width: Val::Px(150.0),
-                height: Val::Px(100.0),
-                border: UiRect::all(Val::Px(5.0)),
+                width: Val::Px(220.0),
+                height: Val::Px(80.0),
+                border: UiRect::all(Val::Px(4.0)),
                 justify_content: JustifyContent::Center,
-                border_radius: BorderRadius::MAX,
+                border_radius: BorderRadius::all(Val::Px(10.0)),
                 position_type: PositionType::Absolute,
                 align_items: AlignItems::Center,
-                right: Val::Px(10.0),
-                bottom: Val::Px(10.0),
+                right: Val::Px(20.0),
+                bottom: Val::Px(20.0),
                 ..Default::default()
             },
-            BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-            BackgroundColor(Color::BLACK),
+            BorderColor::from(theme::FINISH_BUTTON.border.idle),
+            BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
         ))
-        .with_child((Text::new("Finish Turn"),));
+        .with_child((
+            Text::new("FINISH TURN"),
+            TextFont {
+                font_size: 28.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
 
     commands.spawn((
         CityUiText,
@@ -115,6 +126,7 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                 parent
                     .spawn((
                         VerbButton(verb),
+                        ActionButton,
                         Button,
                         Node {
                             width: Val::Px(80.0),
@@ -124,8 +136,8 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                             border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
-                        BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-                        BackgroundColor(Color::BLACK),
+                        BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                        BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
                     ))
                     .with_child(Text::new(verb_label(verb)));
             }
@@ -219,13 +231,12 @@ pub fn spawn_turn_ui(mut commands: Commands) {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn finish_turn_clicked(
-    click: On<Pointer<Click>>,
+pub fn finish_turn_trigger_system(
     mut commands: Commands,
-    buttons: Query<(), With<FinishTurnButton>>,
+    interaction_query: Query<&Interaction, (With<FinishTurnButton>, Changed<Interaction>)>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
     turn_state: Query<&TurnState>,
     mut last_submitted: ResMut<LastSubmittedTurn>,
-    mut ui_state: ResMut<UiState>,
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
@@ -236,10 +247,57 @@ pub fn finish_turn_clicked(
     let Ok(state) = turn_state.single() else {
         return;
     };
-    if buttons.contains(click.entity) {
-        commands.client_trigger(FinishTurn);
-        last_submitted.0 = Some(state.turn_number);
-        *ui_state = UiState::Idle;
+
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed && last_submitted.0 != Some(state.turn_number) {
+            commands.client_trigger(FinishTurn);
+            last_submitted.0 = Some(state.turn_number);
+            next_ui_state.set(UiState::Locked);
+        }
+    }
+}
+
+pub fn finish_turn_visual_system(
+    mut button_query: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        With<FinishTurnButton>,
+    >,
+    ui_state: Res<State<UiState>>,
+) {
+    let thm = &theme::FINISH_BUTTON;
+
+    for (interaction, mut bg, mut border) in &mut button_query {
+        if ui_state.is_locked() {
+            *bg = thm.background.waiting.into();
+            *border = thm.border.waiting.into();
+            continue;
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = thm.background.pressed.into();
+                *border = thm.border.pressed.into();
+            }
+            Interaction::Hovered => {
+                *bg = thm.background.hover.into();
+                *border = thm.border.hover.into();
+            }
+            Interaction::None => {
+                *bg = thm.background.idle.into();
+                *border = thm.border.idle.into();
+            }
+        }
+    }
+}
+
+pub fn reset_ui_state_on_turn_state_change(
+    mut next_ui_state: ResMut<NextState<UiState>>,
+    turn_state: Query<&TurnState, Changed<TurnState>>,
+) {
+    if !turn_state.is_empty() {
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
     }
 }
 
@@ -362,10 +420,11 @@ pub fn populate_production_bar(
         parent
             .spawn((
                 ProductionButton(None),
+                ActionButton,
                 Button,
                 production_button_node(),
-                BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-                BackgroundColor(Color::BLACK),
+                BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
             ))
             .with_child(Text::new("None"));
 
@@ -375,10 +434,11 @@ pub fn populate_production_bar(
             parent
                 .spawn((
                     ProductionButton(Some(*id)),
+                    ActionButton,
                     Button,
                     production_button_node(),
-                    BorderColor::all(Color::linear_rgb(1.0, 0.8, 0.2)),
-                    BackgroundColor(Color::BLACK),
+                    BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                    BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
                 ))
                 .with_child(Text::new(recipe_button_label(recipe.output, &units)));
         }
@@ -443,9 +503,9 @@ pub fn update_production_bar(
 // reacts to UiState changes: shows/hides bar, sets enabled/greyed buttons
 #[allow(clippy::too_many_arguments)]
 pub fn update_action_bar(
-    ui_state: Res<UiState>,
+    ui_state: Res<State<UiState>>,
     mut bars: Query<&mut Node, (With<ActionBar>, Without<VerbButton>)>,
-    mut buttons: Query<(&VerbButton, &mut BackgroundColor)>,
+    mut buttons: Query<(&VerbButton, &mut BackgroundColor, &mut BorderColor)>,
     units: Query<&Unit>,
     registry: Res<UnitRegistry>,
     controller: Res<Controller>,
@@ -461,15 +521,15 @@ pub fn update_action_bar(
         }
         return;
     }
-    let unit_entity = match *ui_state {
-        UiState::Idle => {
+    let unit_entity = match ui_state.selection() {
+        Some(InputSelection::Idle) | None => {
             for mut node in &mut bars {
                 node.display = Display::None;
             }
             return;
         }
-        UiState::UnitSelected { unit } => unit,
-        UiState::Targeting { unit, .. } => unit,
+        Some(InputSelection::UnitSelected { unit }) => *unit,
+        Some(InputSelection::Targeting { unit, .. }) => *unit,
     };
 
     for mut node in &mut bars {
@@ -484,12 +544,76 @@ pub fn update_action_bar(
     };
     let available = available_verbs(def);
 
-    for (button, mut bg) in &mut buttons {
+    for (button, mut bg, mut border) in &mut buttons {
         if available.contains(&button.0) {
-            *bg = BackgroundColor(Color::BLACK);
+            *bg = BackgroundColor::from(theme::FINISH_BUTTON.background.idle);
+            *border = BorderColor::from(theme::FINISH_BUTTON.border.idle);
         } else {
             // greyed: visually distinct but click handler will also reject
             *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+            *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn action_button_visual_system(
+    ui_state: Res<State<UiState>>,
+    units: Query<&Unit>,
+    registry: Res<UnitRegistry>,
+    mut buttons: Query<
+        (
+            Option<&VerbButton>,
+            Option<&ProductionButton>,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        (With<ActionButton>, Changed<Interaction>),
+    >,
+) {
+    let thm = &theme::FINISH_BUTTON;
+
+    let is_disabled_verb = |verb_button: Option<&VerbButton>| -> bool {
+        if let Some(VerbButton(verb)) = verb_button {
+            let unit_entity = match ui_state.selection() {
+                Some(InputSelection::UnitSelected { unit }) => *unit,
+                Some(InputSelection::Targeting { unit, .. }) => *unit,
+                _ => return false,
+            };
+
+            let Ok(unit) = units.get(unit_entity) else {
+                return false;
+            };
+            let Some(def) = registry.get(&unit.type_id) else {
+                return false;
+            };
+            !available_verbs(def).contains(verb)
+        } else {
+            false
+        }
+    };
+
+    for (verb_button, _production_button, interaction, mut bg, mut border) in &mut buttons {
+        if is_disabled_verb(verb_button) {
+            *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
+            *border = BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0));
+            continue;
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = thm.background.pressed.into();
+                *border = thm.border.pressed.into();
+            }
+            Interaction::Hovered => {
+                *bg = thm.background.hover.into();
+                *border = thm.border.hover.into();
+            }
+            Interaction::None => {
+                *bg = thm.background.idle.into();
+                *border = thm.border.idle.into();
+            }
         }
     }
 }
@@ -509,7 +633,8 @@ pub fn handle_verb_button_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     buttons: Query<&VerbButton>,
-    mut ui_state: ResMut<UiState>,
+    ui_state: Res<State<UiState>>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
     units: Query<&Unit>,
     registry: Res<UnitRegistry>,
     turn_state: Query<&TurnState>,
@@ -519,7 +644,9 @@ pub fn handle_verb_button_click(
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     if local_player_game_over(&controller, &defeated, &victorious) {
-        *ui_state = UiState::Idle;
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
         return;
     }
     let Ok(VerbButton(verb)) = buttons.get(click.entity) else {
@@ -537,10 +664,10 @@ pub fn handle_verb_button_click(
         return;
     }
 
-    let unit_entity = match *ui_state {
-        UiState::UnitSelected { unit } => unit,
-        UiState::Targeting { unit, .. } => unit,
-        UiState::Idle => return,
+    let unit_entity = match ui_state.selection() {
+        Some(InputSelection::UnitSelected { unit }) => *unit,
+        Some(InputSelection::Targeting { unit, .. }) => *unit,
+        _ => return,
     };
 
     let Ok(unit) = units.get(unit_entity) else {
@@ -555,43 +682,54 @@ pub fn handle_verb_button_click(
 
     match verb {
         UnitVerb::Move => {
-            *ui_state = match *ui_state {
-                // re-clicking the targeting verb toggles back to UnitSelected
-                UiState::Targeting {
+            next_ui_state.set(match ui_state.selection() {
+                Some(InputSelection::Targeting {
                     unit,
                     verb: TargetableVerb::Move,
-                } => UiState::UnitSelected { unit },
-                _ => UiState::Targeting {
-                    unit: unit_entity,
-                    verb: TargetableVerb::Move,
+                }) => UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: *unit },
                 },
-            };
+                _ => UiState::Input {
+                    selection: InputSelection::Targeting {
+                        unit: unit_entity,
+                        verb: TargetableVerb::Move,
+                    },
+                },
+            });
         }
         UnitVerb::Attack => {
-            *ui_state = match *ui_state {
-                UiState::Targeting {
+            next_ui_state.set(match ui_state.selection() {
+                Some(InputSelection::Targeting {
                     unit,
                     verb: TargetableVerb::Attack,
-                } => UiState::UnitSelected { unit },
-                _ => UiState::Targeting {
-                    unit: unit_entity,
-                    verb: TargetableVerb::Attack,
+                }) => UiState::Input {
+                    selection: InputSelection::UnitSelected { unit: *unit },
                 },
-            };
+                _ => UiState::Input {
+                    selection: InputSelection::Targeting {
+                        unit: unit_entity,
+                        verb: TargetableVerb::Attack,
+                    },
+                },
+            });
         }
         UnitVerb::Fortify => {
             commands.client_trigger(UnitActionEvent {
                 unit: unit_entity,
                 action: UnitAction::Fortify,
             });
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
         }
         UnitVerb::Skip => {
             commands.client_trigger(UnitActionEvent {
                 unit: unit_entity,
                 action: UnitAction::Skip,
             });
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
         }
         UnitVerb::Build => {
             // single-target stub: only one project per unit today (settler→city);
@@ -605,7 +743,9 @@ pub fn handle_verb_button_click(
                     project: project.clone(),
                 },
             });
-            *ui_state = UiState::Idle;
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
         }
     }
 }
@@ -653,17 +793,44 @@ pub fn update_lose_screen(
     victorious: Query<(), With<VictoriousPlayer>>,
     mut screens: Query<&mut Node, With<LoseScreen>>,
     mut victory_screens: Query<&mut Node, (With<VictoryScreen>, Without<LoseScreen>)>,
-    mut ui_state: ResMut<UiState>,
+    mut next_ui_state: ResMut<NextState<UiState>>,
 ) {
     let lost = local_player_defeated(&controller, &defeated);
     let won = local_player_victorious(&controller, &victorious);
     if lost || won {
-        *ui_state = UiState::Idle;
+        next_ui_state.set(UiState::Input {
+            selection: InputSelection::Idle,
+        });
     }
     for mut node in &mut screens {
         node.display = if lost { Display::Flex } else { Display::None };
     }
     for mut node in &mut victory_screens {
         node.display = if won { Display::Flex } else { Display::None };
+    }
+}
+
+pub struct UiPlugin;
+
+impl Plugin for UiPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(handle_verb_button_click)
+            .add_observer(handle_production_button_click)
+            .add_systems(Startup, spawn_turn_ui)
+            .add_systems(
+                Update,
+                (
+                    populate_production_bar,
+                    update_turn_ui,
+                    update_city_ui,
+                    update_action_bar,
+                    update_production_bar,
+                    action_button_visual_system,
+                    finish_turn_trigger_system,
+                    finish_turn_visual_system,
+                    reset_ui_state_on_turn_state_change,
+                    update_lose_screen,
+                ),
+            );
     }
 }

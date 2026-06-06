@@ -67,67 +67,27 @@ fn main() {
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedPlugin,
+            InputPlugin,
+            UiPlugin,
+            VisualsPlugin,
+            CameraPlugin,
         ))
         .insert_resource(ServerAddr(addr))
         .init_resource::<LastSubmittedTurn>()
         .init_resource::<HoveredHex>()
         .init_resource::<Controller>()
-        .init_resource::<UiState>()
         .init_resource::<CameraZoom>()
         // Host's pending lobby map choice; sent to the server via SetMapConfig.
         .init_resource::<MapSettings>()
         .add_systems(
             Startup,
-            (
-                setup_camera,
-                setup_hex_materials,
-                connect_to_server,
-                spawn_turn_ui,
-                spawn_lobby_ui,
-                play_background_music,
-            ),
+            (connect_to_server, play_background_music, spawn_lobby_ui),
         )
+        .init_state::<UiState>()
         .add_observer(on_your_player)
-        .add_observer(finish_turn_clicked)
-        .add_observer(handle_verb_button_click)
-        .add_observer(handle_production_button_click)
         .add_observer(handle_start_game_click)
         .add_observer(handle_map_config_click)
-        .add_systems(
-            Update,
-            (
-                (
-                    spawn_hex_visuals,
-                    spawn_unit_visuals,
-                    update_unit_colors,
-                    spawn_city_visuals,
-                    update_city_visuals,
-                    update_unit_positions,
-                    update_unit_health_bars,
-                    update_city_health_bars,
-                ),
-                (
-                    move_camera_with_keyboard,
-                    zoom_camera_with_scroll,
-                    update_hex_highlights,
-                    handle_left_click,
-                    handle_right_click,
-                    handle_escape_key,
-                    prune_stale_selection,
-                ),
-                (
-                    reset_submission_on_new_turn,
-                    populate_production_bar,
-                    update_turn_ui,
-                    update_city_ui,
-                    update_action_bar,
-                    update_production_bar,
-                    update_lobby_ui,
-                    update_map_config_ui,
-                    update_lose_screen,
-                ),
-            ),
-        )
+        .add_systems(Update, (update_lobby_ui, update_map_config_ui))
         .run();
 }
 
