@@ -838,6 +838,7 @@ impl Plugin for UiPlugin {
                     finish_turn_trigger_system,
                     finish_turn_visual_system,
                     reset_ui_state_on_turn_state_change,
+                    update_lose_screen,
                 ),
             );
     }
