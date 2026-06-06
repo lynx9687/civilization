@@ -49,7 +49,7 @@ jobs:
           wasm-opt -Oz -o ./web-client/client_bg.wasm ./web-client/client_bg.wasm
 
       - name: Copy assets
-        run: cp -r assets/* ./web-client/assets/
+        run: mkdir ./web-client/assets; cp -r assets/* ./web-client/assets/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
