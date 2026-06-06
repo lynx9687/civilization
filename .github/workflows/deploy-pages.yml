@@ -46,10 +46,15 @@ jobs:
             --out-dir ./web-client/ --out-name client \
             ./target/wasm32-unknown-unknown/release/client.wasm
 
+      # Rust enables the wasm reference-types feature by default, which wasm-bindgen
+      # uses for its externref table. wasm-opt must be told about it (and bulk-memory)
+      # or it trims the table's max size, causing a runtime "failed to grow table"
+      # RangeError in __wbindgen_init_externref_table.
       - name: Optimize wasm
         run: |
           sudo apt-get update && sudo apt-get install -y binaryen
-          wasm-opt -Oz -o ./web-client/client_bg.wasm ./web-client/client_bg.wasm
+          wasm-opt -Oz --enable-reference-types --enable-bulk-memory \
+            -o ./web-client/client_bg.wasm ./web-client/client_bg.wasm
 
       - name: Copy assets
         run: mkdir ./web-client/assets; cp -r assets/* ./web-client/assets/
