@@ -250,14 +250,10 @@ pub fn handle_unit_action(
                 println!("Rejected move: target not reachable");
                 return;
             }
-            // Reject if a friendly is currently standing on the target tile.
-            if units
-                .iter()
-                .any(|(p, o, _)| p == target && o.0 == *player_entity)
-            {
-                println!("Rejected move: friendly already on tile");
-                return;
-            }
+            // A friendly standing on the target tile is allowed: moves resolve
+            // simultaneously, so the occupant may vacate this turn (follow-moves,
+            // rotations, swaps). The resolver is the source of truth — if the tile
+            // isn't actually freed, it rolls this move back at turn end.
             if let Some((_, city_owner)) = cities.iter().find(|(p, _)| *p == target)
                 && city_owner.entity != *player_entity
                 && def.attack_range != 1
@@ -1023,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_unit_action_rejects_move_to_friendly_occupied_tile() {
+    fn test_handle_unit_action_allows_move_onto_friendly_occupied_tile() {
         use crate::players::PlayerMap;
         use bevy::app::ScheduleRunnerPlugin;
         use bevy::state::app::StatesPlugin;
@@ -1105,7 +1101,9 @@ mod tests {
             (client, player, mover, blocker)
         };
 
-        // Try to move mover onto blocker's tile.
+        // Move mover onto blocker's tile. Now accepted at submit: moves resolve
+        // simultaneously, so the blocker may vacate this turn. The resolver rolls
+        // the move back at turn end if the tile isn't actually freed.
         app.world_mut().trigger(FromClient {
             client_id: ClientId::Client(client),
             message: UnitActionEvent {
@@ -1117,10 +1115,10 @@ mod tests {
         });
         app.world_mut().flush();
 
-        // Move must be rejected: no MoveTo on the mover.
+        // Move must be accepted: MoveTo queued on the mover.
         assert!(
-            app.world().get::<MoveTo>(mover).is_none(),
-            "Move to friendly-occupied tile must be rejected"
+            app.world().get::<MoveTo>(mover).is_some(),
+            "Move onto a friendly-occupied tile must be accepted (resolver decides)"
         );
         let _ = (player, blocker);
     }
