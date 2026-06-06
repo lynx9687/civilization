@@ -181,10 +181,28 @@ fn connect_to_server(
     _addr: Res<ServerAddr>,
 ) -> Result<()> {
     // The URL and `server_addr` must agree: WebSocketClient::send rejects any packet
-    // whose destination differs from the address derived from this URL, so we build
-    // both from one SocketAddr. (Localhost WebSocket is the server's UDP port + 1.)
-    let ws_addr: SocketAddr = "127.0.0.1:8081".parse().unwrap();
-    let server_url = url::Url::parse(&format!("ws://{ws_addr}"))?;
+    // whose destination differs from the address derived from the URL.
+    //
+    // Dev (default): plain ws:// to localhost, addressed by its real SocketAddr.
+    // Prod (feature "wss"): TLS WebSocket via Caddy, reached by domain. A domain has
+    // no SocketAddr, so netcode uses the dummy 0.0.0.0:0 on both ends (the client's
+    // WebSocketClient derives the same dummy for a domain host, and the server's
+    // socket_addresses[1] is set to match).
+    #[cfg(not(feature = "wss"))]
+    let (url_str, server_addr) = {
+        let ws_addr: SocketAddr = "127.0.0.1:8081".parse().unwrap();
+        (format!("ws://{ws_addr}"), ws_addr)
+    };
+    #[cfg(feature = "wss")]
+    let (url_str, server_addr) = {
+        const SERVER_DOMAIN: &str = "158-180-62-178.sslip.io";
+        (
+            format!("wss://{SERVER_DOMAIN}"),
+            SocketAddr::from(([0, 0, 0, 0], 0)),
+        )
+    };
+
+    let server_url = url::Url::parse(&url_str)?;
     let socket = WebSocketClient::new(WebSocketClientConfig { server_url })
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let server_channels_config = channels.server_configs();
@@ -204,7 +222,7 @@ fn connect_to_server(
         // Socket 1 on the server is the WebSocket transport (socket 0 is UDP).
         socket_id: 1,
         protocol_id: PROTOCOL_ID,
-        server_addr: ws_addr,
+        server_addr,
         user_data: None,
     };
     let transport = NetcodeClientTransport::new(current_time, authentication, socket)?;

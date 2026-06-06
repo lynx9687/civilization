@@ -17,7 +17,7 @@ use bevy_replicon_renet2::{
     RenetChannelsExt, RepliconRenetPlugins,
     netcode::{
         BoxedSocket, NativeSocket, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig,
-        WebSocketServer, WebSocketServerConfig,
+        WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
     },
     renet2::{ConnectionConfig, RenetServer},
 };
@@ -129,8 +129,34 @@ fn start_server(
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+
+    // Dev (default): no proxy, clients connect by IP, netcode encrypts the payload.
+    // Prod (feature "wss"): a Caddy proxy terminates TLS and forwards plain ws to us.
+    // `has_tls_proxy: true` tells netcode TLS already encrypts (so it won't double-
+    // encrypt, matching the wss client), and the public address must be the dummy
+    // 0.0.0.0:0 because clients connect by domain, not IP.
+    #[cfg(not(feature = "wss"))]
+    let (acceptor, ws_public_addr) = (
+        WebSocketAcceptor::Plain {
+            has_tls_proxy: false,
+        },
+        ws_addr,
+    );
+    #[cfg(feature = "wss")]
+    let (acceptor, ws_public_addr) = (
+        WebSocketAcceptor::Plain {
+            has_tls_proxy: true,
+        },
+        SocketAddr::from(([0, 0, 0, 0], 0)),
+    );
+
     let ws_socket = WebSocketServer::new(
-        WebSocketServerConfig::new(ws_addr, 8),
+        WebSocketServerConfig {
+            acceptor,
+            // Always bind the real local address; Caddy connects here over plain ws.
+            listen: ws_addr,
+            max_clients: 8,
+        },
         runtime.handle().clone(),
     )
     .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -141,8 +167,9 @@ fn start_server(
         protocol_id: PROTOCOL_ID,
         // renet2 supports multiple sockets per server; the outer Vec is indexed
         // by socket id. Socket 0 is UDP, socket 1 is WebSocket. Clients pick the
-        // matching socket id in their ClientAuthentication.
-        socket_addresses: vec![vec![addr.0], vec![ws_addr]],
+        // matching socket id in their ClientAuthentication. socket_addresses[1]
+        // must equal the client's `server_addr` for the WebSocket socket.
+        socket_addresses: vec![vec![addr.0], vec![ws_public_addr]],
         authentication: ServerAuthentication::Unsecure,
     };
     let transport = NetcodeServerTransport::new_with_sockets(

@@ -38,8 +38,11 @@ jobs:
       - name: Install Dependencies
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
 
+      # Must match the deployed Pages client, which is built with `wss`: the server
+      # runs behind Caddy (TLS proxy) and addresses WebSocket clients by domain.
+      # Without this the deployed server/client disagree on encryption + address.
       - name: Build Release Binary
-        run: cargo build --release --bin server
+        run: cargo build --release -p server --features wss
 
       - name: Prepare release directory on server
         uses: appleboy/ssh-action@v1.0.3

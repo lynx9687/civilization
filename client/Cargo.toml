@@ -3,6 +3,11 @@ name = "client"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Connect to the deployed server over TLS WebSocket (wss://, fronted by Caddy)
+# instead of plain ws:// on localhost. Used by the Pages deploy build.
+wss = []
+
 [dependencies]
 bevy.workspace = true
 bevy_replicon.workspace = true
