@@ -47,16 +47,14 @@ impl UnitRegistry {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         let mut name_to_id = HashMap::new();
         let mut definitions = HashMap::new();
-        let mut next_id: u8 = 0;
-        for (name, contents) in entries {
+        for (next_id, (name, contents)) in entries.into_iter().enumerate() {
             let def: UnitDefinition = ron::from_str(&contents).map_err(|e| LoadError::Parse {
                 path: std::path::PathBuf::from(&name),
                 source: e,
             })?;
-            let id = UnitTypeId(next_id);
+            let id = UnitTypeId(next_id as u8);
             name_to_id.insert(name, id);
             definitions.insert(id, def);
-            next_id += 1;
         }
         Ok(UnitRegistry {
             name_to_id,
