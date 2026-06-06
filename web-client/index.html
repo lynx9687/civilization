@@ -11,6 +11,33 @@
     #game { width: 100vw; height: 100vh; overflow: hidden; }
     #game-canvas { display: block; width: 100%; height: 100%; }
   </style>
+  <script>
+    // Browser autoplay policy starts every AudioContext suspended until the user
+    // interacts with the page, so bevy's audio (created at startup) stays silent.
+    // Wrap the AudioContext constructor to track every context the wasm creates,
+    // then resume them on the first user gesture. Must run before the wasm loads.
+    (function () {
+      const Original = window.AudioContext || window.webkitAudioContext;
+      if (!Original) return;
+      const contexts = [];
+      const Tracked = class extends Original {
+        constructor(...args) {
+          super(...args);
+          contexts.push(this);
+        }
+      };
+      window.AudioContext = Tracked;
+      window.webkitAudioContext = Tracked;
+      const resumeAll = () => {
+        for (const ctx of contexts) {
+          if (ctx.state === "suspended") ctx.resume();
+        }
+      };
+      for (const evt of ["pointerdown", "keydown", "touchstart"]) {
+        window.addEventListener(evt, resumeAll);
+      }
+    })();
+  </script>
 </head>
 
 <body>
