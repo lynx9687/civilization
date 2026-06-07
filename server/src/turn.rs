@@ -692,6 +692,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
 
             // Owning player entity.
@@ -1069,6 +1070,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1224,6 +1226,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1340,6 +1343,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1474,6 +1478,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1567,6 +1572,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1662,6 +1668,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1979,6 +1986,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -2054,6 +2062,7 @@ mod tests {
         app.world_mut().spawn(TurnState {
             phase: TurnPhase::WaitingForPlayers,
             turn_number: 3,
+            ..Default::default()
         });
         // No Player entities — simulates all-disconnected state.
         app.update();
@@ -2086,6 +2095,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let player1 = world
                 .spawn((
@@ -2134,6 +2144,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let host_player = world
                 .spawn((
@@ -2182,6 +2193,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let player = world
                 .spawn((

@@ -20,7 +20,7 @@ pub const TURN_DURATION_SECS: u32 = 60;
 
 /// Replicated turn state — lives on a single entity spawned by the server.
 /// We use entity rather than resource because entities can be autmatically replicated by replicon
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[require(Replicated)]
 pub struct TurnState {
     pub phase: TurnPhase,
@@ -30,8 +30,9 @@ pub struct TurnState {
     pub turn_elapsed_secs: u32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub enum TurnPhase {
+    #[default]
     Lobby,
     WaitingForPlayers,
     Accepting,
