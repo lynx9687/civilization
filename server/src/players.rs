@@ -10,12 +10,19 @@ use shared::{components::*, hex::HexPosition, units::*};
 use crate::turn::{PlayerState, PlayerTurnState};
 
 /// Maps ConnectedClient entity → Player entity.
-/// `join_order` holds client entities in strict connection order so that
-/// host reassignment always picks the oldest remaining connected player.
+///
+/// `join_order` — strict connection-arrival order; used for host fallback on
+/// disconnect and WaitingPlayer → Player promotion.
+///
+/// `lobby_order` — order in which clients entered the *current* lobby session
+/// (fresh join, WaitingPlayer promotion, or match return). Cleared when a game
+/// starts. `reindex_lobby_players` uses this to assign contiguous color_indices
+/// so that whoever entered the lobby first is always Player 1.
 #[derive(Resource, Default)]
 pub struct PlayerMap {
     pub client_to_player: HashMap<Entity, Entity>,
     pub join_order: Vec<Entity>,
+    pub lobby_order: Vec<Entity>,
 }
 
 #[derive(SystemParam)]
@@ -87,6 +94,7 @@ pub fn handle_new_clients(
             .client_to_player
             .insert(client_entity, player_entity);
         setup.player_map.join_order.push(client_entity);
+        setup.player_map.lobby_order.push(client_entity);
 
         setup
             .player_state
@@ -111,7 +119,7 @@ pub fn handle_new_clients(
 pub fn promote_waiting_players(
     turn_state: Query<&TurnState>,
     waiting: Query<Entity, With<WaitingPlayer>>,
-    player_map: Res<PlayerMap>,
+    mut player_map: ResMut<PlayerMap>,
     mut player_state: ResMut<PlayerState>,
     mut commands: Commands,
 ) {
@@ -125,7 +133,7 @@ pub fn promote_waiting_players(
         return;
     }
 
-    for (idx, &client_entity) in player_map.join_order.iter().enumerate() {
+    for &client_entity in player_map.join_order.clone().iter() {
         let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
             continue;
         };
@@ -133,12 +141,12 @@ pub fn promote_waiting_players(
             continue;
         }
 
-        let color_index = idx as u8;
+        // color_index will be corrected by reindex_lobby_players; use 0 as placeholder.
         commands
             .entity(player_entity)
             .remove::<WaitingPlayer>()
             .insert(Player {
-                color_index,
+                color_index: 0,
                 gold: 0,
             });
 
@@ -146,9 +154,10 @@ pub fn promote_waiting_players(
             .turn
             .insert(client_entity, PlayerTurnState::InProgress);
 
-        // Units for promoted players are placed at the next game start, same as
-        // for fresh lobby joins (see server::map_gen::generate_map_on_start).
-        println!("Promoted WaitingPlayer {player_entity} to Player (color_index {color_index})");
+        // Append to lobby_order so this player is indexed after whoever is already in lobby.
+        player_map.lobby_order.push(client_entity);
+
+        println!("Promoted WaitingPlayer {player_entity} to Player (will be reindexed)");
     }
 }
 
@@ -164,15 +173,19 @@ pub fn handle_disconnects(
     mut unit_colors: Query<(&Owner, &mut ColorIndex), (With<Unit>, Without<City>)>,
     mut city_colors: Query<(&CityOwner, &mut ColorIndex), (With<City>, Without<Unit>)>,
 ) {
+    let mut any_disconnected = false;
     for client_entity in disconnected.read() {
+        any_disconnected = true;
         let prev_state = player_state.turn.remove(&client_entity);
         if prev_state.is_some_and(|state| state == PlayerTurnState::Finished) {
             player_state.finished_cnt -= 1;
         }
         if let Some(player_entity) = player_map.client_to_player.remove(&client_entity) {
-            // Keep join_order in sync; do this before the host-reassignment check
-            // so that join_order.first() already reflects the remaining players.
+            // Keep join_order and lobby_order in sync; do this before the
+            // host-reassignment check so that join_order.first() already
+            // reflects the remaining players.
             player_map.join_order.retain(|&e| e != client_entity);
+            player_map.lobby_order.retain(|&e| e != client_entity);
 
             let was_host = host_check.contains(player_entity);
             commands.entity(player_entity).despawn();
@@ -191,7 +204,15 @@ pub fn handle_disconnects(
         }
     }
 
-    // Reassign color indices so the lobby list stays contiguous after any disconnect.
+    // Reindex only when a disconnect actually happened. Running this every frame
+    // would overwrite lobby_order-based color assignments with join_order-based
+    // ones, corrupting colors on the game-start frame when reindex_lobby_players
+    // no longer runs (phase has moved to Accepting).
+    if !any_disconnected {
+        return;
+    }
+
+    // Reassign color indices so the lobby list stays contiguous after a disconnect.
     // Collect (player_entity → new_color) first so we can update units/cities in the same pass.
     let mut color_map: HashMap<Entity, u8> = HashMap::new();
     for (idx, &client_entity) in player_map.join_order.iter().enumerate() {
@@ -212,6 +233,68 @@ pub fn handle_disconnects(
         if let Some(&new_color) = color_map.get(&city_owner.entity) {
             color.0 = new_color;
         }
+    }
+}
+
+/// Re-indexes `color_index` and `Host` every frame while the server is in
+/// `TurnPhase::Lobby`. Keeps the lobby list contiguous and the host correct
+/// after match-end transitions, waiting-player promotions, or disconnects.
+pub fn reindex_lobby_players(
+    turn_state: Query<&TurnState>,
+    player_map: Res<PlayerMap>,
+    mut players: Query<
+        &mut Player,
+        (
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+            Without<WaitingPlayer>,
+        ),
+    >,
+    host_query: Query<Entity, With<Host>>,
+    mut commands: Commands,
+) {
+    let Ok(state) = turn_state.single() else {
+        return;
+    };
+    if state.phase != TurnPhase::Lobby {
+        return;
+    }
+
+    // Collect active lobby players in lobby_order (order they entered this lobby session).
+    // This ensures a WaitingPlayer who was promoted before a match player returns stays
+    // at a lower index than the returning player, regardless of original join_order.
+    let lobby_players: Vec<Entity> = player_map
+        .lobby_order
+        .iter()
+        .filter_map(|&c| player_map.client_to_player.get(&c).copied())
+        .filter(|&pe| players.get(pe).is_ok())
+        .collect();
+
+    // Assign contiguous 0-based color_indices; skip write when already correct.
+    for (idx, &pe) in lobby_players.iter().enumerate() {
+        if let Ok(mut p) = players.get_mut(pe) {
+            if p.color_index != idx as u8 {
+                p.color_index = idx as u8;
+            }
+        }
+    }
+
+    // Ensure exactly one Host on the first active lobby player.
+    let desired_host = lobby_players.first().copied();
+    let current_host = host_query.iter().next();
+    match (desired_host, current_host) {
+        (Some(d), Some(c)) if d == c => {}
+        (Some(d), c) => {
+            if let Some(old) = c {
+                commands.entity(old).remove::<Host>();
+            }
+            commands.entity(d).insert(Host);
+            println!("Host reassigned to {d}");
+        }
+        (None, Some(old)) => {
+            commands.entity(old).remove::<Host>();
+        }
+        (None, None) => {}
     }
 }
 

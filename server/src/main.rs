@@ -30,7 +30,7 @@ use map_config::handle_set_map_config;
 use map_gen::{
     MapTiles, cleanup_map_on_lobby, generate_map_on_start, should_cleanup_map, should_generate_map,
 };
-use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
+use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players, reindex_lobby_players};
 use turn::*;
 
 #[derive(Resource)]
@@ -78,6 +78,7 @@ fn main() {
                 generate_map_on_start.run_if(should_generate_map),
                 cleanup_map_on_lobby.run_if(should_cleanup_map),
                 promote_waiting_players,
+                reindex_lobby_players,
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
                 update_turn_timer,
                 // Resolution window: gated as a group so all resolvers see

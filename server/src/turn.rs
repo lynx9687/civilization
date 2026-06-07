@@ -156,7 +156,7 @@ pub fn update_turn_phase(
 
 pub fn handle_return_to_lobby(
     trigger: On<FromClient<ReturnToLobby>>,
-    player_map: Res<PlayerMap>,
+    mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
     mut player_state: ResMut<PlayerState>,
 ) {
@@ -174,13 +174,15 @@ pub fn handle_return_to_lobby(
     player_state
         .turn
         .insert(client_entity, PlayerTurnState::InProgress);
+    // Append to lobby_order so this player is indexed after whoever is already in lobby.
+    player_map.lobby_order.push(client_entity);
     println!("Player {client_entity} returned to lobby");
 }
 
 #[allow(clippy::type_complexity)]
 pub fn handle_start_game(
     trigger: On<FromClient<StartGame>>,
-    player_map: Res<PlayerMap>,
+    mut player_map: ResMut<PlayerMap>,
     hosts: Query<(), With<Host>>,
     players: Query<
         (),
@@ -228,6 +230,9 @@ pub fn handle_start_game(
     }
 
     state.phase = TurnPhase::Accepting;
+    // Reset lobby_order so the next lobby session starts fresh.
+    // Returning players and promoted WaitingPlayers will be appended in arrival order.
+    player_map.lobby_order.clear();
     println!(
         "Game started by host. Accepting moves for turn {}",
         state.turn_number
