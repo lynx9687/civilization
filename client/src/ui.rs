@@ -43,6 +43,15 @@ pub struct LoseScreen;
 #[derive(Component)]
 pub struct VictoryScreen;
 
+#[derive(Component)]
+pub struct PlayerColorIndicator;
+
+#[derive(Component)]
+pub struct PlayerColorSwatch;
+
+#[derive(Component)]
+pub struct PlayerColorText;
+
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
         TurnUiText,
@@ -102,6 +111,50 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             ..default()
         },
     ));
+
+    commands
+        .spawn((
+            PlayerColorIndicator,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(20.0),
+                height: Val::Px(42.0),
+                display: Display::None,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(10.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::all(Val::Px(8.0)),
+                ..default()
+            },
+            BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.2)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                PlayerColorSwatch,
+                Node {
+                    width: Val::Px(20.0),
+                    height: Val::Px(20.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: BorderRadius::all(Val::Px(10.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::WHITE),
+                BackgroundColor(Color::WHITE),
+            ));
+            parent.spawn((
+                PlayerColorText,
+                Text::new("Your color"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
+
     // bottom-left action bar; hidden while UiState == Idle
     commands
         .spawn((
@@ -348,6 +401,49 @@ pub fn update_turn_ui(
     };
 
     **text = message;
+}
+
+pub fn update_player_color_indicator(
+    controller: Res<Controller>,
+    turn_state: Query<&TurnState>,
+    players: Query<&Player>,
+    mut indicators: Query<&mut Node, With<PlayerColorIndicator>>,
+    mut swatches: Query<(&mut BackgroundColor, &mut BorderColor), With<PlayerColorSwatch>>,
+    mut labels: Query<&mut Text, With<PlayerColorText>>,
+) {
+    let show_ingame = turn_state
+        .single()
+        .is_ok_and(|state| state.phase != TurnPhase::Lobby);
+    let Some(player_entity) = controller.player_entity else {
+        for mut node in &mut indicators {
+            node.display = Display::None;
+        }
+        return;
+    };
+    let Ok(player) = players.get(player_entity) else {
+        for mut node in &mut indicators {
+            node.display = Display::None;
+        }
+        return;
+    };
+
+    for mut node in &mut indicators {
+        node.display = if show_ingame {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    let color = player_color(player.color_index);
+    for (mut background, mut border) in &mut swatches {
+        *background = BackgroundColor(color);
+        *border = BorderColor::all(Color::WHITE);
+    }
+
+    for mut text in &mut labels {
+        **text = format!("Player {}", player.color_index + 1);
+    }
 }
 
 pub fn update_city_ui(
@@ -822,6 +918,7 @@ impl Plugin for UiPlugin {
                 (
                     populate_production_bar,
                     update_turn_ui,
+                    update_player_color_indicator,
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
