@@ -31,6 +31,80 @@ pub struct PlayerState {
     pub finished_cnt: i32,
 }
 
+/// Server-side turn timer state. Not replicated — the replicated `TurnState::turn_elapsed_secs`
+/// is the client-facing view; this struct is the internal clock that drives it.
+#[derive(Resource, Default)]
+pub struct TurnTimerState {
+    elapsed: f32,
+    was_accepting: bool,
+    last_turn_number: u32,
+    /// Guards against double-firing the forced timeout within the same turn.
+    timed_out: bool,
+}
+
+/// Drives the per-turn countdown on the server.
+///
+/// Responsibilities:
+/// - Detects turn start (phase enters Accepting, or turn_number advances while Accepting).
+/// - Increments elapsed time every frame.
+/// - Publishes `turn_elapsed_secs` to the replicated `TurnState` once per second.
+/// - At `TURN_DURATION_SECS`, marks all remaining InProgress players as Finished so that
+///   `turn_is_resolving` becomes true and the resolution window runs as normal.
+pub fn update_turn_timer(
+    time: Res<Time>,
+    mut turn_state: Query<&mut TurnState>,
+    mut timer: ResMut<TurnTimerState>,
+    mut player_state: ResMut<PlayerState>,
+    player_map: Res<PlayerMap>,
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>)>,
+) {
+    let Ok(mut state) = turn_state.single_mut() else {
+        return;
+    };
+
+    let is_accepting = state.phase == TurnPhase::Accepting;
+    let phase_just_entered_accepting = !timer.was_accepting && is_accepting;
+    let turn_number_changed = timer.last_turn_number != state.turn_number;
+
+    if phase_just_entered_accepting || (is_accepting && turn_number_changed) {
+        timer.elapsed = 0.0;
+        timer.timed_out = false;
+        state.turn_elapsed_secs = 0;
+    }
+
+    timer.was_accepting = is_accepting;
+    timer.last_turn_number = state.turn_number;
+
+    if !is_accepting {
+        return;
+    }
+
+    timer.elapsed += time.delta_secs();
+    let new_elapsed_secs = timer.elapsed as u32;
+
+    // Publish elapsed seconds to the replicated component once per second.
+    if state.turn_elapsed_secs != new_elapsed_secs {
+        state.turn_elapsed_secs = new_elapsed_secs;
+    }
+
+    if timer.elapsed >= TURN_DURATION_SECS as f32 && !timer.timed_out {
+        timer.timed_out = true;
+        let mut newly_finished = 0i32;
+        for (client_entity, turn_state_entry) in player_state.turn.iter_mut() {
+            if *turn_state_entry == PlayerTurnState::InProgress {
+                if let Some(&player_entity) = player_map.client_to_player.get(client_entity) {
+                    if players.contains(player_entity) {
+                        *turn_state_entry = PlayerTurnState::Finished;
+                        newly_finished += 1;
+                    }
+                }
+            }
+        }
+        player_state.finished_cnt += newly_finished;
+        println!("Turn timed out — forced {newly_finished} player(s) to finish.");
+    }
+}
+
 pub fn update_turn_phase(
     players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
     mut turn_state: Query<&mut TurnState>,

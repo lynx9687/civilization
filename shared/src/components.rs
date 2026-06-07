@@ -15,6 +15,9 @@ pub struct Player {
     pub gold: i32,
 }
 
+/// Seconds allowed per turn; enforced server-side, displayed client-side.
+pub const TURN_DURATION_SECS: u32 = 60;
+
 /// Replicated turn state — lives on a single entity spawned by the server.
 /// We use entity rather than resource because entities can be autmatically replicated by replicon
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -22,6 +25,9 @@ pub struct Player {
 pub struct TurnState {
     pub phase: TurnPhase,
     pub turn_number: u32,
+    /// Seconds elapsed in the current turn, updated every second by the server.
+    /// Replicated so clients can display an accurate countdown even after reconnecting.
+    pub turn_elapsed_secs: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

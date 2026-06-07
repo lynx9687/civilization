@@ -17,6 +17,9 @@ use crate::visuals::theme;
 pub struct TurnUiText;
 
 #[derive(Component)]
+pub struct TimerUiText;
+
+#[derive(Component)]
 pub struct FinishTurnButton;
 
 #[derive(Component)]
@@ -56,6 +59,21 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(10.0),
             left: Val::Px(10.0),
+            ..default()
+        },
+    ));
+    commands.spawn((
+        TimerUiText,
+        Text::new(""),
+        TextFont {
+            font_size: 28.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            right: Val::Px(20.0),
             ..default()
         },
     ));
@@ -810,6 +828,28 @@ pub fn update_lose_screen(
     }
 }
 
+pub fn update_timer_ui(
+    turn_state: Query<&TurnState>,
+    mut timer_text: Query<&mut Text, With<TimerUiText>>,
+) {
+    let Ok(mut text) = timer_text.single_mut() else {
+        return;
+    };
+
+    let Ok(state) = turn_state.single() else {
+        **text = String::new();
+        return;
+    };
+
+    if state.phase != TurnPhase::Accepting {
+        **text = String::new();
+        return;
+    }
+
+    let remaining = TURN_DURATION_SECS.saturating_sub(state.turn_elapsed_secs);
+    **text = format!("{}:{:02}", remaining / 60, remaining % 60);
+}
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
@@ -822,6 +862,7 @@ impl Plugin for UiPlugin {
                 (
                     populate_production_bar,
                     update_turn_ui,
+                    update_timer_ui,
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
