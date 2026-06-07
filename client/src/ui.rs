@@ -311,11 +311,16 @@ pub fn finish_turn_visual_system(
 pub fn reset_ui_state_on_turn_state_change(
     mut next_ui_state: ResMut<NextState<UiState>>,
     turn_state: Query<&TurnState, Changed<TurnState>>,
+    mut last_key: Local<Option<(u32, TurnPhase)>>,
 ) {
-    if !turn_state.is_empty() {
-        next_ui_state.set(UiState::Input {
-            selection: InputSelection::Idle,
-        });
+    for state in &turn_state {
+        let key = (state.turn_number, state.phase.clone());
+        if last_key.as_ref() != Some(&key) {
+            *last_key = Some(key);
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
+        }
     }
 }
 
@@ -830,6 +835,7 @@ pub fn update_lose_screen(
 
 pub fn update_timer_ui(
     turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
     mut timer_text: Query<&mut Text, With<TimerUiText>>,
 ) {
     let Ok(mut text) = timer_text.single_mut() else {
@@ -842,6 +848,12 @@ pub fn update_timer_ui(
     };
 
     if state.phase != TurnPhase::Accepting {
+        **text = String::new();
+        return;
+    }
+
+    // Hide timer once the local player has submitted — they are waiting for others.
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
         **text = String::new();
         return;
     }

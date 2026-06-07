@@ -490,8 +490,14 @@ pub fn prune_stale_selection(
 pub fn reset_submission_on_new_turn(
     turn_state: Query<&TurnState, Changed<TurnState>>,
     last_submitted: Res<LastSubmittedTurn>,
+    mut last_logged_turn: Local<Option<u32>>,
 ) {
     for state in &turn_state {
+        // Guard: only act once per distinct turn_number value.
+        if *last_logged_turn == Some(state.turn_number) {
+            continue;
+        }
+        *last_logged_turn = Some(state.turn_number);
         if let Some(submitted) = last_submitted.0
             && state.turn_number > submitted
         {
