@@ -79,6 +79,12 @@ pub enum TargetableVerb {
     Attack,
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetDotType {
+    Move,
+    Attack,
+}
+
 #[derive(SystemParam)]
 pub struct CursorWorld<'w, 's> {
     windows: Query<'w, 's, &'static Window>,
@@ -89,9 +95,11 @@ type TileHighlightQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static HexPosition,
         Option<&'static TileOwner>,
         Option<&'static Terrain>,
+        Option<&'static Children>,
         &'static mut MeshMaterial2d<ColorMaterial>,
     ),
     With<HexTile>,
@@ -105,10 +113,18 @@ fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
     Some(pixel_to_hex(world_pos, HEX_SIZE))
 }
 
+#[derive(SystemParam)]
+pub struct MeshAssets<'w, 's> {
+    pub assets: ResMut<'w, Assets<Mesh>>,
+    pub dot: Local<'s, Option<Handle<Mesh>>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn update_hex_highlights(
     cursor: CursorWorld,
+    mut commands: Commands,
     mut tiles: TileHighlightQuery,
+    mut mesh_bundle: MeshAssets,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
     ui_state: Res<UiState>,
@@ -120,7 +136,9 @@ pub fn update_hex_highlights(
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
+    dot_type_query: Query<&TargetDotType>,
 ) {
+    let (meshes, dot_mesh) = (&mut mesh_bundle.assets, &mut mesh_bundle.dot);
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
@@ -196,17 +214,13 @@ pub fn update_hex_highlights(
         }
     };
 
-    for (pos, _owner, terrain, mut material) in &mut tiles {
+    for (entity, pos, _owner, terrain, children, mut material) in &mut tiles {
         if cursor_hex == Some(*pos) {
             // Apply terrain-specific hover material.
             let hover = terrain
                 .map(|t| hex_materials.hovered[*t as usize].clone())
                 .unwrap_or_else(|| hex_materials.default.clone());
             *material = MeshMaterial2d(hover);
-        } else if attack_targets.contains(pos) {
-            *material = MeshMaterial2d(hex_materials.valid_attack.clone());
-        } else if move_targets.contains(pos) {
-            *material = MeshMaterial2d(hex_materials.valid_move.clone());
         } else {
             // Unhighlighted tiles repaint to their terrain's base material.
             // Ownership is indicated by a border mesh (OwnershipBorder), not by color override.
@@ -214,6 +228,52 @@ pub fn update_hex_highlights(
                 .map(|t| hex_materials.terrain_material(*t))
                 .unwrap_or_else(|| hex_materials.default.clone());
             *material = MeshMaterial2d(base);
+        }
+
+        let desired_dot = if attack_targets.contains(pos) {
+            Some(TargetDotType::Attack)
+        } else if move_targets.contains(pos) {
+            Some(TargetDotType::Move)
+        } else {
+            None
+        };
+
+        let existing_dot = children.and_then(|children| {
+            children
+                .iter()
+                .find(|child| dot_type_query.get(*child).is_ok())
+        });
+
+        if let Some(existing) = existing_dot {
+            if desired_dot.is_none() {
+                commands.entity(existing).despawn();
+                continue;
+            }
+            if let Ok(current) = dot_type_query.get(existing) {
+                if *current != desired_dot.unwrap() {
+                    commands.entity(existing).despawn();
+                } else {
+                    continue;
+                }
+            }
+        }
+
+        if let Some(dot_type) = desired_dot {
+            commands.entity(entity).with_children(|parent| {
+                let mesh_handle = dot_mesh
+                    .get_or_insert_with(|| meshes.add(RegularPolygon::new(HEX_SIZE * 0.18, 16)))
+                    .clone();
+                let material = match dot_type {
+                    TargetDotType::Move => hex_materials.valid_move.clone(),
+                    TargetDotType::Attack => hex_materials.valid_attack.clone(),
+                };
+                parent.spawn((
+                    dot_type,
+                    Mesh2d(mesh_handle),
+                    MeshMaterial2d(material),
+                    Transform::from_xyz(0.0, 0.0, 0.15),
+                ));
+            });
         }
     }
 }
