@@ -17,6 +17,9 @@ use shared::{
 use crate::HEX_SIZE;
 use crate::visuals::{HexMaterials, HoverHighlightVisual, hex_mesh};
 
+const HOVER_HIGHLIGHT_Z: f32 = 0.2;
+const TARGET_DOT_Z: f32 = 3.0;
+
 /// Tracks which turn the local player last submitted a move for.
 #[derive(Resource, Default)]
 pub struct LastSubmittedTurn(pub Option<u32>);
@@ -262,7 +265,7 @@ pub fn update_hex_highlights(
                         HoverHighlightVisual,
                         Mesh2d(mesh_handle),
                         MeshMaterial2d(hex_materials.hover.clone()),
-                        Transform::from_xyz(0.0, 0.0, 0.2),
+                        Transform::from_xyz(0.0, 0.0, HOVER_HIGHLIGHT_Z),
                     ));
                 });
             }
@@ -303,15 +306,11 @@ pub fn update_hex_highlights(
                 let mesh_handle = dot_mesh
                     .get_or_insert_with(|| meshes.add(RegularPolygon::new(HEX_SIZE * 0.18, 16)))
                     .clone();
-                let material = match dot_type {
-                    TargetDotType::Move => hex_materials.valid_move.clone(),
-                    TargetDotType::Attack => hex_materials.valid_attack.clone(),
-                };
                 parent.spawn((
                     dot_type,
                     Mesh2d(mesh_handle),
-                    MeshMaterial2d(material),
-                    Transform::from_xyz(0.0, 0.0, 0.15),
+                    MeshMaterial2d(hex_materials.target_dot.clone()),
+                    Transform::from_xyz(0.0, 0.0, TARGET_DOT_Z),
                 ));
             });
         }

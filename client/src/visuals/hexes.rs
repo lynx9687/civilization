@@ -13,7 +13,6 @@ use bevy::{
     mesh::{Indices, PrimitiveTopology},
 };
 
-const HEX_TINT_STRENGTH: f32 = 1.0;
 const HEX_MESH_ROTATION: f32 = std::f32::consts::FRAC_PI_6;
 
 /// Handles to shared hex materials for highlighting.
@@ -22,8 +21,7 @@ pub struct HexMaterials {
     pub default: Handle<ColorMaterial>,
     /// Translucent material drawn over a hovered tile without replacing its terrain texture.
     pub hover: Handle<ColorMaterial>,
-    pub valid_move: Handle<ColorMaterial>,
-    pub valid_attack: Handle<ColorMaterial>,
+    pub target_dot: Handle<ColorMaterial>,
     /// Base material per terrain, indexed by `terrain as usize` (see `Terrain::ALL`).
     pub terrain: Vec<Handle<ColorMaterial>>,
     /// Ownership border materials (player colors), indexed by player color_index.
@@ -56,14 +54,7 @@ pub fn setup_hex_materials(
     let hex_materials = HexMaterials {
         default: materials.add(hex_material(default_texture.clone(), Color::WHITE)),
         hover: materials.add(ColorMaterial::from(Color::srgba(1.0, 1.0, 1.0, 0.28))),
-        valid_move: materials.add(tinted_hex_material(
-            default_texture.clone(),
-            Color::srgb(0.4, 0.8, 0.4),
-        )),
-        valid_attack: materials.add(tinted_hex_material(
-            default_texture.clone(),
-            Color::srgb(0.8, 0.3, 0.3),
-        )),
+        target_dot: materials.add(ColorMaterial::from(Color::srgb(0.35, 0.35, 0.35))),
         // Distinct texture per terrain, indexed by `terrain as usize`.
         // Iterating `Terrain::ALL` keeps index == discriminant reorder-safe.
         terrain: Terrain::ALL
@@ -151,19 +142,6 @@ fn terrain_texture_path(terrain: Terrain) -> &'static str {
         Terrain::Mountain => "textures/tiles/mountain.png",
         Terrain::Water => "textures/tiles/water.png",
     }
-}
-
-fn tinted_hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
-    let srgba_color = color.to_srgba();
-    let soften = |channel| 0.5 + channel * HEX_TINT_STRENGTH;
-    hex_material(
-        texture,
-        Color::srgb(
-            soften(srgba_color.red),
-            soften(srgba_color.green),
-            soften(srgba_color.blue),
-        ),
-    )
 }
 
 fn hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
