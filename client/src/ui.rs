@@ -14,9 +14,18 @@ use crate::input::{
 };
 use crate::visuals::theme;
 
-const TOOLTIP_WIDTH: f32 = 230.0;
+const TOOLTIP_WIDTH: f32 = 210.0;
 const TOOLTIP_HEIGHT: f32 = 154.0;
 const TOOLTIP_CURSOR_OFFSET: f32 = 18.0;
+
+#[derive(Resource)]
+pub struct TooltipsEnabled(pub bool);
+
+impl Default for TooltipsEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -68,6 +77,12 @@ pub struct UnitTooltipSubtitle;
 
 #[derive(Component)]
 pub struct UnitTooltipStats;
+
+#[derive(Component)]
+pub struct TooltipToggleButton;
+
+#[derive(Component)]
+pub struct TooltipToggleText;
 
 type UnitTooltipTitleFilter = (
     With<UnitTooltipTitle>,
@@ -187,6 +202,36 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                 TextColor(Color::WHITE),
             ));
         });
+
+    commands
+        .spawn((
+            TooltipToggleButton,
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(62.0),
+                right: Val::Px(20.0),
+                width: Val::Px(118.0),
+                height: Val::Px(34.0),
+                display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::all(Val::Px(8.0)),
+                ..default()
+            },
+            BorderColor::from(theme::FINISH_BUTTON.border.idle),
+            BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
+        ))
+        .with_child((
+            TooltipToggleText,
+            Text::new("Tooltips: On"),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
 
     // bottom-left action bar; hidden while UiState == Idle
     commands
@@ -538,6 +583,7 @@ pub fn update_player_color_indicator(
 
 #[allow(clippy::too_many_arguments)]
 pub fn update_unit_tooltip(
+    enabled: Res<TooltipsEnabled>,
     hovered_hex: Res<HoveredHex>,
     windows: Query<&Window>,
     units: Query<(&Unit, &Health, &Owner, &ColorIndex, &HexPosition)>,
@@ -551,6 +597,11 @@ pub fn update_unit_tooltip(
     let Ok(mut tooltip) = tooltips.single_mut() else {
         return;
     };
+
+    if !enabled.0 {
+        tooltip.display = Display::None;
+        return;
+    }
 
     let Some(hex) = hovered_hex.current() else {
         tooltip.display = Display::None;
@@ -613,6 +664,71 @@ pub fn update_unit_tooltip(
             // definition.gold_upkeep,
             definition.production_cost
         );
+    }
+}
+
+pub fn handle_tooltip_toggle_click(
+    click: On<Pointer<Click>>,
+    buttons: Query<(), With<TooltipToggleButton>>,
+    mut enabled: ResMut<TooltipsEnabled>,
+) {
+    if buttons.get(click.entity).is_ok() {
+        enabled.0 = !enabled.0;
+    }
+}
+
+pub fn update_tooltip_toggle_button(
+    enabled: Res<TooltipsEnabled>,
+    turn_state: Query<&TurnState>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<TooltipToggleButton>,
+    >,
+    mut labels: Query<&mut Text, With<TooltipToggleText>>,
+) {
+    let show = turn_state
+        .single()
+        .is_ok_and(|state| state.phase != TurnPhase::Lobby);
+    let thm = &theme::FINISH_BUTTON;
+
+    for (interaction, mut node, mut bg, mut border) in &mut buttons {
+        node.display = if show { Display::Flex } else { Display::None };
+
+        match *interaction {
+            Interaction::Pressed => {
+                *bg = thm.background.pressed.into();
+                *border = thm.border.pressed.into();
+            }
+            Interaction::Hovered => {
+                *bg = thm.background.hover.into();
+                *border = thm.border.hover.into();
+            }
+            Interaction::None => {
+                *bg = if enabled.0 {
+                    thm.background.idle.into()
+                } else {
+                    BackgroundColor(Color::srgb(0.2, 0.2, 0.2))
+                };
+                *border = if enabled.0 {
+                    thm.border.idle.into()
+                } else {
+                    BorderColor::from(Color::srgba(0.5, 0.5, 0.5, 1.0))
+                };
+            }
+        }
+    }
+
+    for mut label in &mut labels {
+        **label = if enabled.0 {
+            "Tooltips: On".to_string()
+        } else {
+            "Tooltips: Off".to_string()
+        };
     }
 }
 
@@ -1091,6 +1207,8 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(handle_verb_button_click)
             .add_observer(handle_production_button_click)
+            .add_observer(handle_tooltip_toggle_click)
+            .init_resource::<TooltipsEnabled>()
             .add_systems(Startup, spawn_turn_ui)
             .add_systems(
                 Update,
@@ -1099,6 +1217,7 @@ impl Plugin for UiPlugin {
                     update_turn_ui,
                     update_player_color_indicator,
                     update_unit_tooltip,
+                    update_tooltip_toggle_button,
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
