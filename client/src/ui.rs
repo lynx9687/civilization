@@ -544,8 +544,12 @@ pub fn update_production_bar(
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut bars: Query<&mut Node, With<ProductionBar>>,
+    mut prev_game_over: Local<bool>,
 ) {
-    if !controller.is_changed() && defeated.is_empty() && victorious.is_empty() {
+    let game_over = local_player_game_over(&controller, &defeated, &victorious);
+    let game_over_changed = game_over != *prev_game_over;
+    *prev_game_over = game_over;
+    if !controller.is_changed() && !game_over_changed {
         return;
     }
 
@@ -571,8 +575,12 @@ pub fn update_action_bar(
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
+    mut prev_game_over: Local<bool>,
 ) {
-    if !ui_state.is_changed() && defeated.is_empty() && victorious.is_empty() {
+    let game_over = local_player_game_over(&controller, &defeated, &victorious);
+    let game_over_changed = game_over != *prev_game_over;
+    *prev_game_over = game_over;
+    if !ui_state.is_changed() && !game_over_changed {
         return;
     }
     if local_player_game_over(&controller, &defeated, &victorious) {

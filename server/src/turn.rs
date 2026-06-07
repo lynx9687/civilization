@@ -106,7 +106,7 @@ pub fn update_turn_timer(
 }
 
 pub fn update_turn_phase(
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>, Without<WaitingPlayer>)>,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
@@ -159,6 +159,7 @@ pub fn handle_return_to_lobby(
     mut player_map: ResMut<PlayerMap>,
     mut commands: Commands,
     mut player_state: ResMut<PlayerState>,
+    turn_state: Query<&TurnState>,
 ) {
     let ClientId::Client(client_entity) = trigger.client_id else {
         return;
@@ -166,17 +167,33 @@ pub fn handle_return_to_lobby(
     let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
         return;
     };
+
+    let phase = turn_state
+        .single()
+        .map(|s| s.phase.clone())
+        .unwrap_or(TurnPhase::Lobby);
+
+    // Always strip match-end markers so the client leaves the win/lose screen.
     commands
         .entity(player_entity)
         .remove::<DefeatedPlayer>()
         .remove::<VictoriousPlayer>();
-    // Re-register for turn tracking so the timer force-finish works in the next game.
-    player_state
-        .turn
-        .insert(client_entity, PlayerTurnState::InProgress);
-    // Append to lobby_order so this player is indexed after whoever is already in lobby.
-    player_map.lobby_order.push(client_entity);
-    println!("Player {client_entity} returned to lobby");
+
+    if phase == TurnPhase::Lobby {
+        // Lobby is idle: register for turn tracking and enter the lobby order.
+        player_state
+            .turn
+            .insert(client_entity, PlayerTurnState::InProgress);
+        player_map.lobby_order.push(client_entity);
+        println!("Player {client_entity} returned to lobby");
+    } else {
+        // A match is in progress. Convert to WaitingPlayer so promote_waiting_players
+        // handles the lobby transition when that match ends. The player must NOT be
+        // inserted into player_state.turn or lobby_order — doing so would make them
+        // an active participant in a game they never joined.
+        commands.entity(player_entity).insert(WaitingPlayer);
+        println!("Player {client_entity} returned during active match — queued as WaitingPlayer");
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -243,7 +260,7 @@ pub fn handle_finish_turn(
     trigger: On<FromClient<FinishTurn>>,
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>, Without<WaitingPlayer>)>,
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let client_entity = match trigger.client_id {
@@ -488,6 +505,7 @@ pub fn eliminate_defeated_players(
             With<Player>,
             Without<DefeatedPlayer>,
             Without<VictoriousPlayer>,
+            Without<WaitingPlayer>,
         ),
     >,
     cities: Query<&CityOwner, With<City>>,
@@ -572,7 +590,7 @@ pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: Res
 pub fn turn_is_resolving(
     turn_state: Query<&TurnState>,
     player_state: Res<PlayerState>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>, Without<WaitingPlayer>)>,
 ) -> bool {
     let Ok(state) = turn_state.single() else {
         return false;
