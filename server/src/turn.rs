@@ -107,6 +107,7 @@ pub fn update_turn_timer(
 
 pub fn update_turn_phase(
     players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
     let count = players.iter().count();
@@ -119,12 +120,19 @@ pub fn update_turn_phase(
             // No auto-advance; host must send StartGame.
         }
         TurnPhase::WaitingForPlayers => {
+            let victorious_count = victorious.iter().count();
             if count == 0 {
                 // All players gone — reset for the next session.
                 state.phase = TurnPhase::Lobby;
                 state.turn_number = 0;
                 println!("All players disconnected, server reset to Lobby");
+            } else if victorious_count > 0 {
+                // A winner has been declared — match is over, return to lobby.
+                state.phase = TurnPhase::Lobby;
+                state.turn_number = 0;
+                println!("Match ended, server returned to Lobby");
             } else if count >= 2 {
+                // No winner, enough players — resume the paused turn.
                 state.phase = TurnPhase::Accepting;
                 println!(
                     "Enough players ({count}), resuming turn {}",
@@ -144,6 +152,29 @@ pub fn update_turn_phase(
             }
         }
     }
+}
+
+pub fn handle_return_to_lobby(
+    trigger: On<FromClient<ReturnToLobby>>,
+    player_map: Res<PlayerMap>,
+    mut commands: Commands,
+    mut player_state: ResMut<PlayerState>,
+) {
+    let ClientId::Client(client_entity) = trigger.client_id else {
+        return;
+    };
+    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+    commands
+        .entity(player_entity)
+        .remove::<DefeatedPlayer>()
+        .remove::<VictoriousPlayer>();
+    // Re-register for turn tracking so the timer force-finish works in the next game.
+    player_state
+        .turn
+        .insert(client_entity, PlayerTurnState::InProgress);
+    println!("Player {client_entity} returned to lobby");
 }
 
 #[allow(clippy::type_complexity)]

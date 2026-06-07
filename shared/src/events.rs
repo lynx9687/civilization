@@ -52,6 +52,11 @@ pub struct FinishTurn;
 #[derive(Event, Serialize, Deserialize, Clone, Debug)]
 pub struct StartGame;
 
+/// Client-to-server event: player acknowledges the match result and requests to
+/// return to the lobby so a new match can begin.
+#[derive(Event, Serialize, Deserialize)]
+pub struct ReturnToLobby;
+
 /// Client-to-server event: host updates the map-generation settings while in the
 /// lobby. The server stores the payload in its `MapSettings` resource, which the
 /// generator reads at game start. Only honored from the host during the Lobby phase.
