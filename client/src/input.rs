@@ -324,14 +324,6 @@ pub fn handle_left_click(
             }
         }
         Some(InputSelection::Targeting { unit, verb }) => {
-            // clicking another owned unit always switches selection
-            if let Some(entity) = owned_unit_at(target) {
-                controller.selected_city = None;
-                next_ui_state.set(UiState::Input {
-                    selection: InputSelection::UnitSelected { unit: entity },
-                });
-                return;
-            }
             let Ok((_, u, _, pos)) = units.get(*unit) else {
                 next_ui_state.set(UiState::Input {
                     selection: InputSelection::Idle,
@@ -346,6 +338,12 @@ pub fn handle_left_click(
             };
             match verb {
                 TargetableVerb::Move => {
+                    // A click in Move mode commits a move to `target`, including onto a
+                    // tile a friendly currently occupies — that is how follow-moves,
+                    // swaps, and rotations are issued: the occupant may vacate this turn
+                    // (all moves resolve simultaneously), and the server rolls the move
+                    // back if the tile isn't actually freed. Reselecting a different
+                    // unit happens from the selected state, before entering Move mode.
                     let city_at_target = cities.iter().find(|(city_pos, _)| **city_pos == target);
                     let valid_city_target = city_at_target.is_none_or(|(_, city_owner)| {
                         city_owner.entity == player_entity || def.attack_range == 1
@@ -372,6 +370,15 @@ pub fn handle_left_click(
                     }
                 }
                 TargetableVerb::Attack => {
+                    // Clicking one of your own units isn't an attack target — treat it
+                    // as switching the selection instead.
+                    if let Some(entity) = owned_unit_at(target) {
+                        controller.selected_city = None;
+                        next_ui_state.set(UiState::Input {
+                            selection: InputSelection::UnitSelected { unit: entity },
+                        });
+                        return;
+                    }
                     // attacker is at `pos`; enemies are units with a different owner_id at `target`
                     let enemy_here = units
                         .iter()

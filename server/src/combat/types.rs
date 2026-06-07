@@ -12,15 +12,15 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug)]
 pub struct UnitSnapshot {
     pub entity: Entity,
-    // owner, max_hp, and attack_range are captured for future algorithm expansions
-    // (e.g. faction-aware combat, morale, extended-range melee) but not yet read.
-    #[allow(dead_code)]
+    // owner distinguishes friendly co-location (a failed move — the mover yields)
+    // from enemy co-location (combat) during resolution.
     pub owner: Entity,
     pub hp: i32,
+    // max_hp is captured for future algorithm expansions (e.g. morale, healing
+    // caps) but not yet read by the resolver.
     #[allow(dead_code)]
     pub max_hp: u32,
     pub attack_damage: u32,
-    #[allow(dead_code)]
     pub attack_range: u32,
     pub start_pos: HexPosition,
     pub action: ResolveAction,
