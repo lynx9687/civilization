@@ -7,7 +7,13 @@ use shared::{
 
 use crate::HEX_SIZE;
 
+use bevy::{
+    asset::RenderAssetUsages,
+    mesh::{Indices, PrimitiveTopology},
+};
+
 const HEX_TINT_STRENGTH: f32 = 1.0;
+const HEX_MESH_ROTATION: f32 = std::f32::consts::FRAC_PI_6;
 
 /// Handles to shared hex materials for highlighting.
 #[derive(Resource)]
@@ -18,7 +24,6 @@ pub struct HexMaterials {
     pub claimed: Vec<Handle<ColorMaterial>>,
     pub valid_attack: Handle<ColorMaterial>,
     /// Base material per terrain, indexed by `terrain as usize` (see `Terrain::ALL`).
-    /// Each terrain gets a distinct, readable base (see `terrain_material`).
     pub terrain: Vec<Handle<ColorMaterial>>,
 }
 
@@ -53,11 +58,16 @@ pub fn setup_hex_materials(
             default_texture.clone(),
             Color::srgb(0.8, 0.3, 0.3),
         )),
-        // Distinct base material per terrain, indexed by `terrain as usize`.
+        // Distinct texture per terrain, indexed by `terrain as usize`.
         // Iterating `Terrain::ALL` keeps index == discriminant reorder-safe.
         terrain: Terrain::ALL
             .iter()
-            .map(|t| materials.add(terrain_material(default_texture.clone(), *t)))
+            .map(|t| {
+                materials.add(hex_material(
+                    asset_server.load(terrain_texture_path(*t)),
+                    Color::WHITE,
+                ))
+            })
             .collect(),
     };
     commands.insert_resource(hex_materials);
@@ -75,40 +85,59 @@ pub fn spawn_hex_visuals(
             .map(|t| hex_materials.terrain_material(*t))
             .unwrap_or_else(|| hex_materials.default.clone());
         commands.entity(entity).insert((
-            Mesh2d(meshes.add(RegularPolygon::new(HEX_SIZE * 0.95, 6))),
+            Mesh2d(meshes.add(hex_mesh(HEX_SIZE * 0.95))),
             MeshMaterial2d(base),
-            Transform::from_xyz(pixel.x, pixel.y, 0.0)
-                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_6)),
+            Transform::from_xyz(pixel.x, pixel.y, 0.0),
         ));
     }
 }
 
-/// Distinct base material for a terrain. The grass texture is green-dominant
-/// (avg ~RGB 111,147,36), so a multiplicative tint can only reach the greens:
-/// grassland is the texture untouched, hill an olive/tan, forest a darker green.
-/// Gray (mountain) and blue (water) aren't reachable by multiplying a green
-/// texture, so they're flat fills with no texture to guarantee the hue.
-fn terrain_material(texture: Handle<Image>, terrain: Terrain) -> ColorMaterial {
-    match terrain {
-        // Texture as-is: the grass png already reads as grassland.
-        Terrain::Grassland => hex_material(texture, Color::WHITE),
-        // Lift red/blue, hold green to pull the yellow-green toward olive/tan.
-        Terrain::Hill => hex_material(texture, Color::srgb(1.3, 0.95, 1.2)),
-        // Darken and bias green so it reads as a deeper forest green.
-        Terrain::Forest => hex_material(texture, Color::srgb(0.4, 0.7, 0.3)),
-        // Flat fills: a green texture can't multiply down to gray/blue.
-        Terrain::Mountain => flat_material(Color::srgb(0.5, 0.5, 0.5)),
-        Terrain::Water => flat_material(Color::srgb(0.2, 0.45, 0.85)),
+/// Creates the flat-top hex geometry directly so terrain textures stay aligned
+/// with the world instead of rotating with the entity transform.
+fn hex_mesh(radius: f32) -> Mesh {
+    let mut positions = Vec::with_capacity(7);
+    let mut normals = Vec::with_capacity(7);
+    let mut uvs = Vec::with_capacity(7);
+    let mut indices = Vec::with_capacity(18);
+
+    positions.push([0.0, 0.0, 0.0]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([0.5, 0.5]);
+
+    for i in 0..6 {
+        let angle = std::f32::consts::FRAC_PI_2
+            + HEX_MESH_ROTATION
+            + i as f32 * std::f32::consts::TAU / 6.0;
+        let (sin, cos) = angle.sin_cos();
+        let x = cos * radius;
+        let y = sin * radius;
+
+        positions.push([x, y, 0.0]);
+        normals.push([0.0, 0.0, 1.0]);
+        uvs.push([(x / radius + 1.0) * 0.5, 1.0 - (y / radius + 1.0) * 0.5]);
     }
+
+    for i in 1..=6 {
+        indices.extend_from_slice(&[0, i, if i == 6 { 1 } else { i + 1 }]);
+    }
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
-/// Untextured solid color — used where a tint of the grass texture can't reach
-/// the target hue (mountain gray, water blue).
-fn flat_material(color: Color) -> ColorMaterial {
-    ColorMaterial {
-        color,
-        texture: None,
-        ..default()
+fn terrain_texture_path(terrain: Terrain) -> &'static str {
+    match terrain {
+        Terrain::Grassland => "textures/tiles/grass.png",
+        Terrain::Hill => "textures/tiles/hill.png",
+        Terrain::Forest => "textures/tiles/forest.png",
+        Terrain::Mountain => "textures/tiles/mountain.png",
+        Terrain::Water => "textures/tiles/water.png",
     }
 }
 
