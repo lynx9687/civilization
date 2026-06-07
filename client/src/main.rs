@@ -87,12 +87,17 @@ fn main() {
         .add_observer(on_your_player)
         .add_observer(handle_start_game_click)
         .add_observer(handle_map_config_click)
-        .add_systems(Update, (update_lobby_ui, update_map_config_ui,
-                    sync_ownership_borders,
-                    spawn_ownership_borders,
-                    update_ownership_border_colors,
-                    cleanup_ownership_border_visuals,
-        ))
+        .add_systems(
+            Update,
+            (
+                update_lobby_ui,
+                update_map_config_ui,
+                sync_ownership_borders,
+                spawn_ownership_borders,
+                update_ownership_border_colors,
+                cleanup_ownership_border_visuals,
+            ),
+        )
         .run();
 }
 

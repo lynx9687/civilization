@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use shared::{
-    components::{DefeatedPlayer, HexTile, OwnershipBorder, Player, PLAYER_COLORS},
+    components::{DefeatedPlayer, HexTile, OwnershipBorder, PLAYER_COLORS, Player},
     hex::{HexPosition, hex_to_pixel},
     terrain::Terrain,
     tiles::TileOwner,
