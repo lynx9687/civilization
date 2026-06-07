@@ -20,8 +20,8 @@ const HEX_MESH_ROTATION: f32 = std::f32::consts::FRAC_PI_6;
 #[derive(Resource)]
 pub struct HexMaterials {
     pub default: Handle<ColorMaterial>,
-    /// Per-terrain hover materials (brightened versions), indexed by `terrain as usize`.
-    pub hovered: Vec<Handle<ColorMaterial>>,
+    /// Translucent material drawn over a hovered tile without replacing its terrain texture.
+    pub hover: Handle<ColorMaterial>,
     pub valid_move: Handle<ColorMaterial>,
     pub valid_attack: Handle<ColorMaterial>,
     /// Base material per terrain, indexed by `terrain as usize` (see `Terrain::ALL`).
@@ -55,12 +55,7 @@ pub fn setup_hex_materials(
     let default_texture = asset_server.load("textures/tiles/grass.png");
     let hex_materials = HexMaterials {
         default: materials.add(hex_material(default_texture.clone(), Color::WHITE)),
-        // Per-terrain brightened hover materials, indexed by `terrain as usize`.
-        // Iterating `Terrain::ALL` keeps index == discriminant reorder-safe.
-        hovered: Terrain::ALL
-            .iter()
-            .map(|t| materials.add(terrain_hovered_material(default_texture.clone(), *t)))
-            .collect(),
+        hover: materials.add(ColorMaterial::from(Color::srgba(1.0, 1.0, 1.0, 0.28))),
         valid_move: materials.add(tinted_hex_material(
             default_texture.clone(),
             Color::srgb(0.4, 0.8, 0.4),
@@ -111,7 +106,7 @@ pub fn spawn_hex_visuals(
 
 /// Creates the flat-top hex geometry directly so terrain textures stay aligned
 /// with the world instead of rotating with the entity transform.
-fn hex_mesh(radius: f32) -> Mesh {
+pub(crate) fn hex_mesh(radius: f32) -> Mesh {
     let mut positions = Vec::with_capacity(7);
     let mut normals = Vec::with_capacity(7);
     let mut uvs = Vec::with_capacity(7);
@@ -158,23 +153,6 @@ fn terrain_texture_path(terrain: Terrain) -> &'static str {
     }
 }
 
-/// Brightened hover material for each terrain type, maintaining terrain identity
-/// while appearing brightened. Values chosen to increase luminosity while preserving hue.
-fn terrain_hovered_material(texture: Handle<Image>, terrain: Terrain) -> ColorMaterial {
-    match terrain {
-        // Brighten the grass texture while keeping it readable as grassland.
-        Terrain::Grassland => hex_material(texture, Color::srgb(1.5, 1.3, 1.2)),
-        // Brighten the olive/tan hill while preserving the hue.
-        Terrain::Hill => hex_material(texture, Color::srgb(1.6, 1.2, 1.3)),
-        // Brighten the dark green forest while keeping it recognizable.
-        Terrain::Forest => hex_material(texture, Color::srgb(0.6, 0.9, 0.5)),
-        // Brightened gray flat fill for mountain.
-        Terrain::Mountain => flat_material(Color::srgb(0.7, 0.7, 0.7)),
-        // Brightened blue flat fill for water.
-        Terrain::Water => flat_material(Color::srgb(0.4, 0.65, 1.0)),
-    }
-}
-
 fn tinted_hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
     let srgba_color = color.to_srgba();
     let soften = |channel| 0.5 + channel * HEX_TINT_STRENGTH;
@@ -198,6 +176,9 @@ fn hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
 
 #[derive(Component)]
 pub(crate) struct OwnershipBorderVisual;
+
+#[derive(Component)]
+pub(crate) struct HoverHighlightVisual;
 
 /// Spawn a larger ownership hex behind the real terrain tile.
 /// The terrain remains visible in the interior, while the border color shows ownership.
@@ -250,27 +231,38 @@ pub fn cleanup_ownership_border_visuals(
     }
 }
 
+type OwnershipBorderSyncQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        Option<&'static TileOwner>,
+        Option<&'static OwnershipBorder>,
+    ),
+    With<HexTile>,
+>;
+
 pub fn sync_ownership_borders(
     mut commands: Commands,
-    tiles: Query<(Entity, Option<&TileOwner>, Option<&OwnershipBorder>), With<HexTile>>,
+    tiles: OwnershipBorderSyncQuery,
     players: Query<&Player, Without<DefeatedPlayer>>,
 ) {
     for (entity, tile_owner, existing_border) in &tiles {
         match tile_owner {
             Some(owner) => {
-                if let Some(player_entity) = owner.player_entity {
-                    if let Ok(player) = players.get(player_entity) {
-                        let desired = OwnershipBorder {
-                            color_index: player.color_index,
-                        };
-                        if existing_border
-                            .map(|existing| existing.color_index != desired.color_index)
-                            .unwrap_or(true)
-                        {
-                            commands.entity(entity).insert(desired);
-                        }
-                        continue;
+                if let Some(player_entity) = owner.player_entity
+                    && let Ok(player) = players.get(player_entity)
+                {
+                    let desired = OwnershipBorder {
+                        color_index: player.color_index,
+                    };
+                    if existing_border
+                        .map(|existing| existing.color_index != desired.color_index)
+                        .unwrap_or(true)
+                    {
+                        commands.entity(entity).insert(desired);
                     }
+                    continue;
                 }
                 if existing_border.is_some() {
                     commands.entity(entity).remove::<OwnershipBorder>();

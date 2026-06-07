@@ -15,7 +15,7 @@ use shared::{
 };
 
 use crate::HEX_SIZE;
-use crate::visuals::HexMaterials;
+use crate::visuals::{HexMaterials, HoverHighlightVisual, hex_mesh};
 
 /// Tracks which turn the local player last submitted a move for.
 #[derive(Resource, Default)]
@@ -133,7 +133,9 @@ fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
 #[derive(SystemParam)]
 pub struct MeshAssets<'w, 's> {
     pub assets: ResMut<'w, Assets<Mesh>>,
+    pub hover_highlights: Query<'w, 's, (), With<HoverHighlightVisual>>,
     pub dot: Local<'s, Option<Handle<Mesh>>>,
+    pub hover: Local<'s, Option<Handle<Mesh>>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -155,7 +157,12 @@ pub fn update_hex_highlights(
     victorious: Query<(), With<VictoriousPlayer>>,
     dot_type_query: Query<&TargetDotType>,
 ) {
-    let (meshes, dot_mesh) = (&mut mesh_bundle.assets, &mut mesh_bundle.dot);
+    let (meshes, hover_highlights, dot_mesh, hover_mesh) = (
+        &mut mesh_bundle.assets,
+        &mesh_bundle.hover_highlights,
+        &mut mesh_bundle.dot,
+        &mut mesh_bundle.hover,
+    );
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
@@ -232,19 +239,35 @@ pub fn update_hex_highlights(
     };
 
     for (entity, pos, _owner, terrain, children, mut material) in &mut tiles {
+        // Always keep the base terrain material on the tile. Hover is drawn as a
+        // child overlay so terrain textures and ownership visuals stay intact.
+        let base = terrain
+            .map(|t| hex_materials.terrain_material(*t))
+            .unwrap_or_else(|| hex_materials.default.clone());
+        *material = MeshMaterial2d(base);
+
+        let existing_hover = children.and_then(|children| {
+            children
+                .iter()
+                .find(|child| hover_highlights.get(*child).is_ok())
+        });
+
         if cursor_hex == Some(*pos) {
-            // Apply terrain-specific hover material.
-            let hover = terrain
-                .map(|t| hex_materials.hovered[*t as usize].clone())
-                .unwrap_or_else(|| hex_materials.default.clone());
-            *material = MeshMaterial2d(hover);
-        } else {
-            // Unhighlighted tiles repaint to their terrain's base material.
-            // Ownership is indicated by a border mesh (OwnershipBorder), not by color override.
-            let base = terrain
-                .map(|t| hex_materials.terrain_material(*t))
-                .unwrap_or_else(|| hex_materials.default.clone());
-            *material = MeshMaterial2d(base);
+            if existing_hover.is_none() {
+                commands.entity(entity).with_children(|parent| {
+                    let mesh_handle = hover_mesh
+                        .get_or_insert_with(|| meshes.add(hex_mesh(HEX_SIZE * 0.95)))
+                        .clone();
+                    parent.spawn((
+                        HoverHighlightVisual,
+                        Mesh2d(mesh_handle),
+                        MeshMaterial2d(hex_materials.hover.clone()),
+                        Transform::from_xyz(0.0, 0.0, 0.2),
+                    ));
+                });
+            }
+        } else if let Some(existing_hover) = existing_hover {
+            commands.entity(existing_hover).despawn();
         }
 
         let desired_dot = if attack_targets.contains(pos) {

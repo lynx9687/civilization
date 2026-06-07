@@ -11,6 +11,7 @@ pub use hexes::{
     HexMaterials, cleanup_ownership_border_visuals, setup_hex_materials, spawn_hex_visuals,
     spawn_ownership_borders, sync_ownership_borders, update_ownership_border_colors,
 };
+pub(crate) use hexes::{HoverHighlightVisual, hex_mesh};
 pub use units::{
     spawn_unit_visuals, update_unit_colors, update_unit_health_bars, update_unit_positions,
 };
