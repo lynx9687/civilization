@@ -28,6 +28,12 @@ pub struct LastSubmittedTurn(pub Option<u32>);
 #[derive(Resource, Default)]
 pub struct HoveredHex(Option<HexPosition>);
 
+impl HoveredHex {
+    pub fn current(&self) -> Option<HexPosition> {
+        self.0
+    }
+}
+
 /// Tracks the local player id and other permanent identity info.
 #[derive(Resource, Default)]
 pub struct Controller {

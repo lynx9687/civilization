@@ -3,15 +3,20 @@ use bevy_replicon::prelude::ClientTriggerExt;
 use shared::cities::{City, CityOwner, CityStats};
 use shared::components::*;
 use shared::events::{CityAction, CityActionEvent, FinishTurn, UnitAction, UnitActionEvent};
+use shared::hex::HexPosition;
 use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, RecipeRegistry};
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
-use shared::units::Unit;
+use shared::units::{ColorIndex, Health, Owner, Unit};
 
 use crate::input::{
-    Controller, InputSelection, LastSubmittedTurn, TargetableVerb, UiState, local_player_defeated,
-    local_player_game_over, local_player_victorious,
+    Controller, HoveredHex, InputSelection, LastSubmittedTurn, TargetableVerb, UiState,
+    local_player_defeated, local_player_game_over, local_player_victorious,
 };
 use crate::visuals::theme;
+
+const TOOLTIP_WIDTH: f32 = 230.0;
+const TOOLTIP_HEIGHT: f32 = 154.0;
+const TOOLTIP_CURSOR_OFFSET: f32 = 18.0;
 
 #[derive(Component)]
 pub struct TurnUiText;
@@ -51,6 +56,34 @@ pub struct PlayerColorSwatch;
 
 #[derive(Component)]
 pub struct PlayerColorText;
+
+#[derive(Component)]
+pub struct UnitTooltip;
+
+#[derive(Component)]
+pub struct UnitTooltipTitle;
+
+#[derive(Component)]
+pub struct UnitTooltipSubtitle;
+
+#[derive(Component)]
+pub struct UnitTooltipStats;
+
+type UnitTooltipTitleFilter = (
+    With<UnitTooltipTitle>,
+    Without<UnitTooltipSubtitle>,
+    Without<UnitTooltipStats>,
+);
+type UnitTooltipSubtitleFilter = (
+    With<UnitTooltipSubtitle>,
+    Without<UnitTooltipTitle>,
+    Without<UnitTooltipStats>,
+);
+type UnitTooltipStatsFilter = (
+    With<UnitTooltipStats>,
+    Without<UnitTooltipTitle>,
+    Without<UnitTooltipSubtitle>,
+);
 
 pub fn spawn_turn_ui(mut commands: Commands) {
     commands.spawn((
@@ -281,6 +314,63 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             )
         ],
     ));
+
+    commands
+        .spawn((
+            UnitTooltip,
+            Node {
+                position_type: PositionType::Absolute,
+                display: Display::None,
+                width: Val::Px(TOOLTIP_WIDTH),
+                padding: UiRect::all(Val::Px(12.0)),
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::all(Val::Px(8.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(7.0),
+                ..default()
+            },
+            BorderColor::all(Color::srgba(0.75, 0.88, 1.0, 0.55)),
+            BackgroundColor(Color::srgba(0.02, 0.03, 0.045, 0.92)),
+            GlobalZIndex(50),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Node {
+                    width: Val::Px(40.0),
+                    height: Val::Px(3.0),
+                    border_radius: BorderRadius::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.95, 0.74, 0.32)),
+            ));
+            parent.spawn((
+                UnitTooltipTitle,
+                Text::new("Archer"),
+                TextFont {
+                    font_size: 22.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+            parent.spawn((
+                UnitTooltipSubtitle,
+                Text::new("Ranged unit"),
+                TextFont {
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.78, 0.86, 0.95, 0.88)),
+            ));
+            parent.spawn((
+                UnitTooltipStats,
+                Text::new("HP 8/8    Move 2\nAttack 3  Range 2\nCost 25"),
+                TextFont {
+                    font_size: 15.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.94, 0.96, 0.98, 1.0)),
+            ));
+        });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -443,6 +533,86 @@ pub fn update_player_color_indicator(
 
     for mut text in &mut labels {
         **text = format!("Player {}", player.color_index + 1);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_unit_tooltip(
+    hovered_hex: Res<HoveredHex>,
+    windows: Query<&Window>,
+    units: Query<(&Unit, &Health, &Owner, &ColorIndex, &HexPosition)>,
+    players: Query<&Player>,
+    registry: Res<UnitRegistry>,
+    mut tooltips: Query<&mut Node, With<UnitTooltip>>,
+    mut titles: Query<&mut Text, UnitTooltipTitleFilter>,
+    mut subtitles: Query<&mut Text, UnitTooltipSubtitleFilter>,
+    mut stats: Query<&mut Text, UnitTooltipStatsFilter>,
+) {
+    let Ok(mut tooltip) = tooltips.single_mut() else {
+        return;
+    };
+
+    let Some(hex) = hovered_hex.current() else {
+        tooltip.display = Display::None;
+        return;
+    };
+    let Some((unit, health, owner, color_index, _pos)) =
+        units.iter().find(|(_, _, _, _, pos)| **pos == hex)
+    else {
+        tooltip.display = Display::None;
+        return;
+    };
+    let Some(definition) = registry.get(&unit.type_id) else {
+        tooltip.display = Display::None;
+        return;
+    };
+    let Some(unit_name) = registry.name_of(unit.type_id) else {
+        tooltip.display = Display::None;
+        return;
+    };
+    let Ok(window) = windows.single() else {
+        tooltip.display = Display::None;
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        tooltip.display = Display::None;
+        return;
+    };
+
+    tooltip.display = Display::Flex;
+    tooltip.left = Val::Px(
+        (cursor.x + TOOLTIP_CURSOR_OFFSET)
+            .min(window.width() - TOOLTIP_WIDTH)
+            .max(0.0),
+    );
+    tooltip.top = Val::Px(
+        (cursor.y + TOOLTIP_CURSOR_OFFSET)
+            .min(window.height() - TOOLTIP_HEIGHT)
+            .max(0.0),
+    );
+
+    let owner_label = players
+        .get(owner.0)
+        .map(|player| format!("Player {}", player.color_index + 1))
+        .unwrap_or_else(|_| format!("Player {}", color_index.0 + 1));
+
+    if let Ok(mut title) = titles.single_mut() {
+        **title = title_case(unit_name);
+    }
+    if let Ok(mut subtitle) = subtitles.single_mut() {
+        **subtitle = format!("{owner_label} unit");
+    }
+    if let Ok(mut stats) = stats.single_mut() {
+        **stats = format!(
+            "HP {}/{}    Move {}\nAttack {}  Range {}\nCost {}",
+            health.current,
+            health.max,
+            definition.move_budget,
+            definition.attack_damage,
+            definition.attack_range,
+            // definition.gold_upkeep,
+            definition.production_cost
+        );
     }
 }
 
@@ -724,6 +894,15 @@ fn verb_label(v: UnitVerb) -> &'static str {
     }
 }
 
+fn title_case(name: &str) -> String {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return "Unit".to_string();
+    };
+
+    first.to_uppercase().chain(chars).collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn handle_verb_button_click(
     click: On<Pointer<Click>>,
@@ -919,6 +1098,7 @@ impl Plugin for UiPlugin {
                     populate_production_bar,
                     update_turn_ui,
                     update_player_color_indicator,
+                    update_unit_tooltip,
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
