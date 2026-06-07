@@ -195,7 +195,7 @@ pub fn spawn_ownership_borders(
         commands.entity(entity).with_children(|parent| {
             parent.spawn((
                 OwnershipBorderVisual,
-                Mesh2d(meshes.add(RegularPolygon::new(border_size, 6))),
+                Mesh2d(meshes.add(hex_mesh(border_size))),
                 MeshMaterial2d(border_material_handle),
                 Transform::from_xyz(0.0, 0.0, -0.1),
             ));
