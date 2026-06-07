@@ -14,6 +14,33 @@ use crate::cities::spawn_city_at_tile;
 use crate::map_gen::MapTiles;
 use crate::players::PlayerMap;
 
+/// Active match participants (excludes defeated, victorious, and waiting-room players).
+type ActivePlayersFilter<'w, 's> = Query<
+    'w,
+    's,
+    (),
+    (
+        With<Player>,
+        Without<DefeatedPlayer>,
+        Without<VictoriousPlayer>,
+        Without<WaitingPlayer>,
+    ),
+>;
+
+/// Like `ActivePlayersFilter` but without the `WaitingPlayer` exclusion.
+/// Used only in `update_turn_timer`, which gates further logic on
+/// `player_state.turn` membership so waiting players are already excluded.
+type TimerPlayersFilter<'w, 's> = Query<
+    'w,
+    's,
+    (),
+    (
+        With<Player>,
+        Without<DefeatedPlayer>,
+        Without<VictoriousPlayer>,
+    ),
+>;
+
 const MIN_CITY_CENTER_DISTANCE: i32 = 4;
 
 /// Represents whether player is still making moves or has finished his turn
@@ -56,14 +83,7 @@ pub fn update_turn_timer(
     mut timer: ResMut<TurnTimerState>,
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
-    players: Query<
-        (),
-        (
-            With<Player>,
-            Without<DefeatedPlayer>,
-            Without<VictoriousPlayer>,
-        ),
-    >,
+    players: TimerPlayersFilter<'_, '_>,
 ) {
     let Ok(mut state) = turn_state.single_mut() else {
         return;
@@ -98,13 +118,12 @@ pub fn update_turn_timer(
         timer.timed_out = true;
         let mut newly_finished = 0i32;
         for (client_entity, turn_state_entry) in player_state.turn.iter_mut() {
-            if *turn_state_entry == PlayerTurnState::InProgress {
-                if let Some(&player_entity) = player_map.client_to_player.get(client_entity) {
-                    if players.contains(player_entity) {
-                        *turn_state_entry = PlayerTurnState::Finished;
-                        newly_finished += 1;
-                    }
-                }
+            if *turn_state_entry == PlayerTurnState::InProgress
+                && let Some(&player_entity) = player_map.client_to_player.get(client_entity)
+                && players.contains(player_entity)
+            {
+                *turn_state_entry = PlayerTurnState::Finished;
+                newly_finished += 1;
             }
         }
         player_state.finished_cnt += newly_finished;
@@ -113,15 +132,7 @@ pub fn update_turn_timer(
 }
 
 pub fn update_turn_phase(
-    players: Query<
-        (),
-        (
-            With<Player>,
-            Without<DefeatedPlayer>,
-            Without<VictoriousPlayer>,
-            Without<WaitingPlayer>,
-        ),
-    >,
+    players: ActivePlayersFilter<'_, '_>,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
@@ -275,15 +286,7 @@ pub fn handle_finish_turn(
     trigger: On<FromClient<FinishTurn>>,
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
-    players: Query<
-        (),
-        (
-            With<Player>,
-            Without<DefeatedPlayer>,
-            Without<VictoriousPlayer>,
-            Without<WaitingPlayer>,
-        ),
-    >,
+    players: ActivePlayersFilter<'_, '_>,
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let client_entity = match trigger.client_id {
@@ -613,15 +616,7 @@ pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: Res
 pub fn turn_is_resolving(
     turn_state: Query<&TurnState>,
     player_state: Res<PlayerState>,
-    players: Query<
-        (),
-        (
-            With<Player>,
-            Without<DefeatedPlayer>,
-            Without<VictoriousPlayer>,
-            Without<WaitingPlayer>,
-        ),
-    >,
+    players: ActivePlayersFilter<'_, '_>,
 ) -> bool {
     let Ok(state) = turn_state.single() else {
         return false;

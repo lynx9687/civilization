@@ -239,6 +239,7 @@ pub fn handle_disconnects(
 /// Re-indexes `color_index` and `Host` every frame while the server is in
 /// `TurnPhase::Lobby`. Keeps the lobby list contiguous and the host correct
 /// after match-end transitions, waiting-player promotions, or disconnects.
+#[allow(clippy::type_complexity)]
 pub fn reindex_lobby_players(
     turn_state: Query<&TurnState>,
     player_map: Res<PlayerMap>,
@@ -272,10 +273,10 @@ pub fn reindex_lobby_players(
 
     // Assign contiguous 0-based color_indices; skip write when already correct.
     for (idx, &pe) in lobby_players.iter().enumerate() {
-        if let Ok(mut p) = players.get_mut(pe) {
-            if p.color_index != idx as u8 {
-                p.color_index = idx as u8;
-            }
+        if let Ok(mut p) = players.get_mut(pe)
+            && p.color_index != idx as u8
+        {
+            p.color_index = idx as u8;
         }
     }
 

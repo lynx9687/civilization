@@ -211,7 +211,7 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                     ReturnToLobbyButton,
                     Button,
                     Node {
-                        width: Val::Px(220.0),
+                        width: Val::Px(260.0),
                         height: Val::Px(60.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
@@ -265,7 +265,7 @@ pub fn spawn_turn_ui(mut commands: Commands) {
                     ReturnToLobbyButton,
                     Button,
                     Node {
-                        width: Val::Px(220.0),
+                        width: Val::Px(260.0),
                         height: Val::Px(60.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
