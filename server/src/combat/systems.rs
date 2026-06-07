@@ -308,6 +308,85 @@ mod tests {
     }
 
     #[test]
+    fn resolve_movement_friendly_follow_chain_advances() {
+        // Drives the new follow-move behavior through the real ECS wrapper
+        // (snapshot → resolve → apply), not just the pure resolver: two friendly
+        // units in a column both advance one tile when the leader vacates.
+        let mut app = App::new();
+        app.add_systems(Update, super::resolve_movement);
+
+        let warrior_id = UnitTypeId(0);
+        let warrior_def = UnitDefinition {
+            hp: 10,
+            move_budget: 2,
+            attack_range: 1,
+            attack_damage: 4,
+            gold_upkeep: 1,
+            production_cost: 10,
+            build_targets: vec![],
+            terrain_cost: HashMap::new(),
+        };
+        let mut registry = UnitRegistry::default();
+        registry.name_to_id.insert("warrior".into(), warrior_id);
+        registry.definitions.insert(warrior_id, warrior_def);
+        app.insert_resource(registry);
+
+        // A:(0,0)→(1,0) follows B:(1,0)→(2,0), both owned by the same player.
+        let (a, b) = {
+            let world = app.world_mut();
+            let p = world
+                .spawn(Player {
+                    color_index: 0,
+                    gold: 0,
+                })
+                .id();
+            let a = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_id,
+                    },
+                    HexPosition::new(0, 0),
+                    Owner(p),
+                    Health::full(10),
+                    MoveTo {
+                        pos: HexPosition::new(1, 0),
+                    },
+                ))
+                .id();
+            let b = world
+                .spawn((
+                    Unit {
+                        type_id: warrior_id,
+                    },
+                    HexPosition::new(1, 0),
+                    Owner(p),
+                    Health::full(10),
+                    MoveTo {
+                        pos: HexPosition::new(2, 0),
+                    },
+                ))
+                .id();
+            (a, b)
+        };
+
+        app.update();
+
+        // Both advanced; no friendly fire; markers consumed.
+        assert_eq!(
+            *app.world().get::<HexPosition>(a).unwrap(),
+            HexPosition::new(1, 0)
+        );
+        assert_eq!(
+            *app.world().get::<HexPosition>(b).unwrap(),
+            HexPosition::new(2, 0)
+        );
+        assert_eq!(app.world().get::<Health>(a).unwrap().current, 10);
+        assert_eq!(app.world().get::<Health>(b).unwrap().current, 10);
+        assert!(app.world().get::<MoveTo>(a).is_none());
+        assert!(app.world().get::<MoveTo>(b).is_none());
+    }
+
+    #[test]
     fn resolve_movement_two_way_stalemate_rolls_back() {
         let mut app = App::new();
         app.add_systems(Update, super::resolve_movement);

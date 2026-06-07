@@ -5,6 +5,9 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
+  # Allow running the deploy by hand against any branch (e.g. web_client) from the
+  # Actions tab or `gh workflow run`.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,13 +16,20 @@ jobs:
   deploy:
     name: Build & Deploy Server
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    # Run for a manual dispatch, or for a successful CI run triggered by a push.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     timeout-minutes: 30
+    # On workflow_run, deploy the exact commit CI validated; on manual dispatch,
+    # fall back to the SHA of the selected branch.
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.DEPLOY_SHA }}
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -38,8 +48,11 @@ jobs:
       - name: Install Dependencies
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
 
+      # Must match the deployed Pages client, which is built with `wss`: the server
+      # runs behind Caddy (TLS proxy) and addresses WebSocket clients by domain.
+      # Without this the deployed server/client disagree on encryption + address.
       - name: Build Release Binary
-        run: cargo build --release --bin server
+        run: cargo build --release -p server --features wss
 
       - name: Prepare release directory on server
         uses: appleboy/ssh-action@v1.0.3
@@ -48,7 +61,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            mkdir -p /home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }}
+            mkdir -p /home/ubuntu/civilization/releases/${{ env.DEPLOY_SHA }}
 
       - name: Upload Binary
         uses: appleboy/scp-action@v0.1.7
@@ -57,7 +70,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "target/release/server"
-          target: "/home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }}/"
+          target: "/home/ubuntu/civilization/releases/${{ env.DEPLOY_SHA }}/"
           strip_components: 2
 
       - name: Upload Assets
@@ -67,7 +80,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "assets"
-          target: "/home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }}/"
+          target: "/home/ubuntu/civilization/releases/${{ env.DEPLOY_SHA }}/"
           strip_components: 0
 
       - name: Activate new release
@@ -77,7 +90,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            ln -sfn /home/ubuntu/civilization/releases/${{ github.event.workflow_run.head_sha }} /home/ubuntu/civilization/current
+            ln -sfn /home/ubuntu/civilization/releases/${{ env.DEPLOY_SHA }} /home/ubuntu/civilization/current
 
             sudo systemctl restart civilization
 

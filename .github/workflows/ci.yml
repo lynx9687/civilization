@@ -83,3 +83,37 @@ jobs:
 
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
+
+  wasm_build:
+    name: WASM Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # The default test/clippy/format jobs only build the native target with
+      # default features, so the wasm-only client path and the wss-gated code are
+      # never compiled there. Build both feature variants to cover both cfg branches:
+      # dev (localhost ws://) and wss (deployed wss:// via Caddy).
+      - name: Build client (wasm, dev)
+        run: cargo build -p client --target wasm32-unknown-unknown
+
+      - name: Build client (wasm, wss)
+        run: cargo build -p client --target wasm32-unknown-unknown --features wss

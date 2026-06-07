@@ -8,3 +8,7 @@ bevy.workspace = true
 bevy_replicon.workspace = true
 serde.workspace = true
 ron.workspace = true
+
+# Browsers have no filesystem, so the wasm build bakes the .ron assets into the binary.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+include_dir = "0.7"

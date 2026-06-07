@@ -39,27 +39,44 @@ impl UnitRegistry {
             .map(|(name, _)| name.as_str())
     }
 
-    pub fn load_from_dir(dir: &std::path::Path) -> Result<Self, LoadError> {
+    /// Builds a registry from `(name, ron-contents)` pairs. Entries are sorted by
+    /// name first so that ID assignment is deterministic: the server and client must
+    /// agree on (name → id), and this order can't depend on the source (arbitrary
+    /// `read_dir` order on native vs. embedded order on wasm).
+    fn from_entries(mut entries: Vec<(String, String)>) -> Result<Self, LoadError> {
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
         let mut name_to_id = HashMap::new();
         let mut definitions = HashMap::new();
-        let mut next_id: u8 = 0;
+        for (next_id, (name, contents)) in entries.into_iter().enumerate() {
+            let def: UnitDefinition = ron::from_str(&contents).map_err(|e| LoadError::Parse {
+                path: std::path::PathBuf::from(&name),
+                source: e,
+            })?;
+            let id = UnitTypeId(next_id as u8);
+            name_to_id.insert(name, id);
+            definitions.insert(id, def);
+        }
+        Ok(UnitRegistry {
+            name_to_id,
+            definitions,
+        })
+    }
+
+    /// Loads unit definitions from a directory of `.ron` files (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_from_dir(dir: &std::path::Path) -> Result<Self, LoadError> {
         let read_dir = std::fs::read_dir(dir).map_err(|e| LoadError::Io {
             path: dir.to_path_buf(),
             source: e,
         })?;
-        // Collect and sort by path for deterministic ID assignment.
-        // Server and client must agree on (name → id), so the order can't
-        // depend on filesystem-arbitrary read_dir order.
-        let mut entries: Vec<_> =
-            read_dir
-                .collect::<Result<_, _>>()
+        let mut entries = Vec::new();
+        for entry in read_dir {
+            let path = entry
                 .map_err(|e| LoadError::Io {
                     path: dir.to_path_buf(),
                     source: e,
-                })?;
-        entries.sort_by_key(|e| e.path());
-        for entry in entries {
-            let path = entry.path();
+                })?
+                .path();
             if path.extension().and_then(|s| s.to_str()) != Some("ron") {
                 continue;
             }
@@ -72,19 +89,39 @@ impl UnitRegistry {
                 path: path.clone(),
                 source: e,
             })?;
-            let def: UnitDefinition = ron::from_str(&contents).map_err(|e| LoadError::Parse {
-                path: path.clone(),
-                source: e,
-            })?;
-            let id = UnitTypeId(next_id);
-            name_to_id.insert(name, id);
-            definitions.insert(id, def);
-            next_id += 1;
+            entries.push((name, contents));
         }
-        Ok(UnitRegistry {
-            name_to_id,
-            definitions,
-        })
+        Self::from_entries(entries)
+    }
+
+    /// Loads unit definitions baked into the binary at compile time (wasm only,
+    /// where there is no filesystem to read from).
+    #[cfg(target_arch = "wasm32")]
+    pub fn load_embedded() -> Result<Self, LoadError> {
+        static UNIT_ASSETS: include_dir::Dir<'_> =
+            include_dir::include_dir!("$CARGO_MANIFEST_DIR/../assets/units");
+        let mut entries = Vec::new();
+        for file in UNIT_ASSETS.files() {
+            let path = file.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("ron") {
+                continue;
+            }
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| LoadError::BadFileName {
+                    path: path.to_path_buf(),
+                })?
+                .to_string();
+            let contents = file
+                .contents_utf8()
+                .ok_or_else(|| LoadError::BadFileName {
+                    path: path.to_path_buf(),
+                })?
+                .to_string();
+            entries.push((name, contents));
+        }
+        Self::from_entries(entries)
     }
 }
 
@@ -227,19 +264,19 @@ pub fn is_reachable(
 /// Startup system that loads `UnitRegistry` from the runtime assets directory and inserts it as a resource.
 /// Registered by `SharedPlugin` so both server and client get it for free.
 pub fn load_unit_registry(mut commands: Commands) {
-    let path = crate::assets::assets_dir().join("units");
-    match UnitRegistry::load_from_dir(&path) {
+    // Native reads the runtime assets directory; wasm has no filesystem, so it uses
+    // the definitions embedded into the binary at compile time.
+    #[cfg(not(target_arch = "wasm32"))]
+    let result = UnitRegistry::load_from_dir(&crate::assets::assets_dir().join("units"));
+    #[cfg(target_arch = "wasm32")]
+    let result = UnitRegistry::load_embedded();
+
+    match result {
         Ok(registry) => {
-            println!(
-                "Loaded {} unit definitions from {}",
-                registry.definitions.len(),
-                path.display()
-            );
+            println!("Loaded {} unit definitions", registry.definitions.len());
             commands.insert_resource(registry);
         }
-        Err(e) => {
-            panic!("Failed to load unit registry from {}: {e}", path.display());
-        }
+        Err(e) => panic!("Failed to load unit registry: {e}"),
     }
 }
 

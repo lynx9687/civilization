@@ -13,12 +13,15 @@ use std::{
 
 use bevy::{app::ScheduleRunnerPlugin, prelude::*, state::app::StatesPlugin};
 use bevy_replicon::prelude::*;
-use bevy_replicon_renet::{
-    RenetChannelsExt, RenetServer, RepliconRenetPlugins,
-    netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig},
-    renet::ConnectionConfig,
+use bevy_replicon_renet2::{
+    RenetChannelsExt, RepliconRenetPlugins,
+    netcode::{
+        BoxedSocket, NativeSocket, NetcodeServerTransport, ServerAuthentication, ServerSetupConfig,
+        WebSocketAcceptor, WebSocketServer, WebSocketServerConfig,
+    },
+    renet2::{ConnectionConfig, RenetServer},
 };
-use shared::{components::*, map_settings::MapSettings, plugin::SharedPlugin};
+use shared::{components::*, map_settings::MapSettings, net, plugin::SharedPlugin};
 
 use cities::*;
 use cities_systems::*;
@@ -30,16 +33,14 @@ use map_gen::{
 use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
 use turn::*;
 
-const PROTOCOL_ID: u64 = 0;
-
 #[derive(Resource)]
 struct BindAddr(SocketAddr);
 
 fn main() {
-    let addr_str = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
-    let addr: SocketAddr = addr_str.parse().expect("Invalid bind address");
+    let addr: SocketAddr = match std::env::args().nth(1) {
+        Some(s) => s.parse().expect("Invalid bind address"),
+        None => net::DEFAULT_BIND_ADDR,
+    };
 
     println!("Starting server on {addr}");
 
@@ -105,34 +106,91 @@ fn start_server(
     channels: Res<RepliconChannels>,
     addr: Res<BindAddr>,
 ) -> Result<()> {
-    let server_channels_config = channels.server_configs();
-    let client_channels_config = channels.client_configs();
-
-    let server = RenetServer::new(ConnectionConfig {
-        server_channels_config,
-        client_channels_config,
-        ..Default::default()
-    });
+    let server = RenetServer::new(ConnectionConfig::from_channels(
+        channels.server_configs(),
+        channels.client_configs(),
+    ));
 
     let current_time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap();
-    let socket = UdpSocket::bind(addr.0)?;
-    let server_config = ServerConfig {
+
+    // Socket 0: native UDP for desktop clients.
+    let udp_socket = NativeSocket::new(UdpSocket::bind(addr.0)?)?;
+
+    // Socket 1: WebSocket for browser (wasm) clients, which can't speak UDP.
+    // The WebSocket transport runs its accept/read/write loops on a tokio runtime;
+    // we keep that runtime alive for the app's lifetime by storing it as a resource
+    // (dropping it would shut down the worker threads and kill all WS connections).
+    // It binds the same IP as UDP, on the shared WebSocket port.
+    let ws_addr = SocketAddr::new(addr.0.ip(), net::GAME_WS_PORT);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    // Dev (default): no proxy, clients connect by IP, netcode encrypts the payload.
+    // Prod (feature "wss"): a Caddy proxy terminates TLS and forwards plain ws to us.
+    // `has_tls_proxy: true` tells netcode TLS already encrypts (so it won't double-
+    // encrypt, matching the wss client), and the public address must be the dummy
+    // 0.0.0.0:0 because clients connect by domain, not IP.
+    #[cfg(not(feature = "wss"))]
+    let (acceptor, ws_public_addr) = (
+        WebSocketAcceptor::Plain {
+            has_tls_proxy: false,
+        },
+        ws_addr,
+    );
+    #[cfg(feature = "wss")]
+    let (acceptor, ws_public_addr) = (
+        WebSocketAcceptor::Plain {
+            has_tls_proxy: true,
+        },
+        SocketAddr::from(([0, 0, 0, 0], 0)),
+    );
+
+    let ws_socket = WebSocketServer::new(
+        WebSocketServerConfig {
+            acceptor,
+            // Always bind the real local address; Caddy connects here over plain ws.
+            listen: ws_addr,
+            max_clients: net::MAX_CLIENTS,
+        },
+        runtime.handle().clone(),
+    )
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let server_config = ServerSetupConfig {
         current_time,
-        max_clients: 8,
-        protocol_id: PROTOCOL_ID,
+        max_clients: net::MAX_CLIENTS,
+        protocol_id: net::PROTOCOL_ID,
+        // renet2 supports multiple sockets per server; the outer Vec is indexed
+        // by socket id. Socket 0 is UDP, socket 1 is WebSocket. Clients pick the
+        // matching socket id in their ClientAuthentication. socket_addresses[1]
+        // must equal the client's `server_addr` for the WebSocket socket.
+        socket_addresses: vec![vec![addr.0], vec![ws_public_addr]],
         authentication: ServerAuthentication::Unsecure,
-        public_addresses: Default::default(),
     };
-    let transport = NetcodeServerTransport::new(server_config, socket)?;
+    let transport = NetcodeServerTransport::new_with_sockets(
+        server_config,
+        vec![BoxedSocket::new(udp_socket), BoxedSocket::new(ws_socket)],
+    )?;
 
     commands.insert_resource(server);
     commands.insert_resource(transport);
+    commands.insert_resource(WsRuntime(runtime));
 
-    println!("Server listening on {}", addr.0);
+    println!(
+        "Server listening on UDP {} and WebSocket ws://{ws_addr}",
+        addr.0
+    );
     Ok(())
 }
+
+/// Holds the tokio runtime that drives the WebSocket server's background tasks.
+/// Kept as a resource purely to keep the runtime (and its worker threads) alive
+/// for the lifetime of the app.
+#[derive(Resource)]
+struct WsRuntime(#[allow(dead_code)] tokio::runtime::Runtime);
 
 /// Spawns the lobby turn-state. The map itself is generated at game start
 /// (`generate_map_on_start`), once the host's settings and player count are known.
