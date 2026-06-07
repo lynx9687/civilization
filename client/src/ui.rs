@@ -2,7 +2,9 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
 use shared::cities::{City, CityOwner, CityStats};
 use shared::components::*;
-use shared::events::{CityAction, CityActionEvent, FinishTurn, ReturnToLobby, UnitAction, UnitActionEvent};
+use shared::events::{
+    CityAction, CityActionEvent, FinishTurn, ReturnToLobby, UnitAction, UnitActionEvent,
+};
 use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, RecipeRegistry};
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
 use shared::units::Unit;

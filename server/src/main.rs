@@ -30,7 +30,10 @@ use map_config::handle_set_map_config;
 use map_gen::{
     MapTiles, cleanup_map_on_lobby, generate_map_on_start, should_cleanup_map, should_generate_map,
 };
-use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players, reindex_lobby_players};
+use players::{
+    PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players,
+    reindex_lobby_players,
+};
 use turn::*;
 
 #[derive(Resource)]

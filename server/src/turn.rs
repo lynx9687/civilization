@@ -56,7 +56,14 @@ pub fn update_turn_timer(
     mut timer: ResMut<TurnTimerState>,
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>)>,
+    players: Query<
+        (),
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+        ),
+    >,
 ) {
     let Ok(mut state) = turn_state.single_mut() else {
         return;
@@ -106,7 +113,15 @@ pub fn update_turn_timer(
 }
 
 pub fn update_turn_phase(
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>, Without<WaitingPlayer>)>,
+    players: Query<
+        (),
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+            Without<WaitingPlayer>,
+        ),
+    >,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
@@ -260,7 +275,15 @@ pub fn handle_finish_turn(
     trigger: On<FromClient<FinishTurn>>,
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>, Without<WaitingPlayer>)>,
+    players: Query<
+        (),
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+            Without<WaitingPlayer>,
+        ),
+    >,
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let client_entity = match trigger.client_id {
@@ -590,7 +613,15 @@ pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: Res
 pub fn turn_is_resolving(
     turn_state: Query<&TurnState>,
     player_state: Res<PlayerState>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>, Without<VictoriousPlayer>, Without<WaitingPlayer>)>,
+    players: Query<
+        (),
+        (
+            With<Player>,
+            Without<DefeatedPlayer>,
+            Without<VictoriousPlayer>,
+            Without<WaitingPlayer>,
+        ),
+    >,
 ) -> bool {
     let Ok(state) = turn_state.single() else {
         return false;
