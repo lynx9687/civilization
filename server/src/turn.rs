@@ -14,6 +14,33 @@ use crate::cities::spawn_city_at_tile;
 use crate::map_gen::MapTiles;
 use crate::players::PlayerMap;
 
+/// Active match participants (excludes defeated, victorious, and waiting-room players).
+type ActivePlayersFilter<'w, 's> = Query<
+    'w,
+    's,
+    (),
+    (
+        With<Player>,
+        Without<DefeatedPlayer>,
+        Without<VictoriousPlayer>,
+        Without<WaitingPlayer>,
+    ),
+>;
+
+/// Like `ActivePlayersFilter` but without the `WaitingPlayer` exclusion.
+/// Used only in `update_turn_timer`, which gates further logic on
+/// `player_state.turn` membership so waiting players are already excluded.
+type TimerPlayersFilter<'w, 's> = Query<
+    'w,
+    's,
+    (),
+    (
+        With<Player>,
+        Without<DefeatedPlayer>,
+        Without<VictoriousPlayer>,
+    ),
+>;
+
 const MIN_CITY_CENTER_DISTANCE: i32 = 4;
 
 /// Represents whether player is still making moves or has finished his turn
@@ -31,8 +58,82 @@ pub struct PlayerState {
     pub finished_cnt: i32,
 }
 
+/// Server-side turn timer state. Not replicated — the replicated `TurnState::turn_elapsed_secs`
+/// is the client-facing view; this struct is the internal clock that drives it.
+#[derive(Resource, Default)]
+pub struct TurnTimerState {
+    elapsed: f32,
+    was_accepting: bool,
+    last_turn_number: u32,
+    /// Guards against double-firing the forced timeout within the same turn.
+    timed_out: bool,
+}
+
+/// Drives the per-turn countdown on the server.
+///
+/// Responsibilities:
+/// - Detects turn start (phase enters Accepting, or turn_number advances while Accepting).
+/// - Increments elapsed time every frame.
+/// - Publishes `turn_elapsed_secs` to the replicated `TurnState` once per second.
+/// - At `TURN_DURATION_SECS`, marks all remaining InProgress players as Finished so that
+///   `turn_is_resolving` becomes true and the resolution window runs as normal.
+pub fn update_turn_timer(
+    time: Res<Time>,
+    mut turn_state: Query<&mut TurnState>,
+    mut timer: ResMut<TurnTimerState>,
+    mut player_state: ResMut<PlayerState>,
+    player_map: Res<PlayerMap>,
+    players: TimerPlayersFilter<'_, '_>,
+) {
+    let Ok(mut state) = turn_state.single_mut() else {
+        return;
+    };
+
+    let is_accepting = state.phase == TurnPhase::Accepting;
+    let phase_just_entered_accepting = !timer.was_accepting && is_accepting;
+    let turn_number_changed = timer.last_turn_number != state.turn_number;
+
+    if phase_just_entered_accepting || (is_accepting && turn_number_changed) {
+        timer.elapsed = 0.0;
+        timer.timed_out = false;
+        state.turn_elapsed_secs = 0;
+    }
+
+    timer.was_accepting = is_accepting;
+    timer.last_turn_number = state.turn_number;
+
+    if !is_accepting {
+        return;
+    }
+
+    timer.elapsed += time.delta_secs();
+    let new_elapsed_secs = timer.elapsed as u32;
+
+    // Publish elapsed seconds to the replicated component once per second.
+    if state.turn_elapsed_secs != new_elapsed_secs {
+        state.turn_elapsed_secs = new_elapsed_secs;
+    }
+
+    if timer.elapsed >= TURN_DURATION_SECS as f32 && !timer.timed_out {
+        timer.timed_out = true;
+        let mut newly_finished = 0i32;
+        for (client_entity, turn_state_entry) in player_state.turn.iter_mut() {
+            if *turn_state_entry == PlayerTurnState::InProgress
+                && let Some(&player_entity) = player_map.client_to_player.get(client_entity)
+                && players.contains(player_entity)
+            {
+                *turn_state_entry = PlayerTurnState::Finished;
+                newly_finished += 1;
+            }
+        }
+        player_state.finished_cnt += newly_finished;
+        println!("Turn timed out — forced {newly_finished} player(s) to finish.");
+    }
+}
+
 pub fn update_turn_phase(
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: ActivePlayersFilter<'_, '_>,
+    victorious: Query<(), With<VictoriousPlayer>>,
     mut turn_state: Query<&mut TurnState>,
 ) {
     let count = players.iter().count();
@@ -45,12 +146,19 @@ pub fn update_turn_phase(
             // No auto-advance; host must send StartGame.
         }
         TurnPhase::WaitingForPlayers => {
+            let victorious_count = victorious.iter().count();
             if count == 0 {
                 // All players gone — reset for the next session.
                 state.phase = TurnPhase::Lobby;
                 state.turn_number = 0;
                 println!("All players disconnected, server reset to Lobby");
+            } else if victorious_count > 0 {
+                // A winner has been declared — match is over, return to lobby.
+                state.phase = TurnPhase::Lobby;
+                state.turn_number = 0;
+                println!("Match ended, server returned to Lobby");
             } else if count >= 2 {
+                // No winner, enough players — resume the paused turn.
                 state.phase = TurnPhase::Accepting;
                 println!(
                     "Enough players ({count}), resuming turn {}",
@@ -72,10 +180,52 @@ pub fn update_turn_phase(
     }
 }
 
+pub fn handle_return_to_lobby(
+    trigger: On<FromClient<ReturnToLobby>>,
+    mut player_map: ResMut<PlayerMap>,
+    mut commands: Commands,
+    mut player_state: ResMut<PlayerState>,
+    turn_state: Query<&TurnState>,
+) {
+    let ClientId::Client(client_entity) = trigger.client_id else {
+        return;
+    };
+    let Some(&player_entity) = player_map.client_to_player.get(&client_entity) else {
+        return;
+    };
+
+    let phase = turn_state
+        .single()
+        .map(|s| s.phase.clone())
+        .unwrap_or(TurnPhase::Lobby);
+
+    // Always strip match-end markers so the client leaves the win/lose screen.
+    commands
+        .entity(player_entity)
+        .remove::<DefeatedPlayer>()
+        .remove::<VictoriousPlayer>();
+
+    if phase == TurnPhase::Lobby {
+        // Lobby is idle: register for turn tracking and enter the lobby order.
+        player_state
+            .turn
+            .insert(client_entity, PlayerTurnState::InProgress);
+        player_map.lobby_order.push(client_entity);
+        println!("Player {client_entity} returned to lobby");
+    } else {
+        // A match is in progress. Convert to WaitingPlayer so promote_waiting_players
+        // handles the lobby transition when that match ends. The player must NOT be
+        // inserted into player_state.turn or lobby_order — doing so would make them
+        // an active participant in a game they never joined.
+        commands.entity(player_entity).insert(WaitingPlayer);
+        println!("Player {client_entity} returned during active match — queued as WaitingPlayer");
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub fn handle_start_game(
     trigger: On<FromClient<StartGame>>,
-    player_map: Res<PlayerMap>,
+    mut player_map: ResMut<PlayerMap>,
     hosts: Query<(), With<Host>>,
     players: Query<
         (),
@@ -123,6 +273,9 @@ pub fn handle_start_game(
     }
 
     state.phase = TurnPhase::Accepting;
+    // Reset lobby_order so the next lobby session starts fresh.
+    // Returning players and promoted WaitingPlayers will be appended in arrival order.
+    player_map.lobby_order.clear();
     println!(
         "Game started by host. Accepting moves for turn {}",
         state.turn_number
@@ -133,7 +286,7 @@ pub fn handle_finish_turn(
     trigger: On<FromClient<FinishTurn>>,
     mut player_state: ResMut<PlayerState>,
     player_map: Res<PlayerMap>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: ActivePlayersFilter<'_, '_>,
     victorious: Query<(), With<VictoriousPlayer>>,
 ) {
     let client_entity = match trigger.client_id {
@@ -374,6 +527,7 @@ pub fn eliminate_defeated_players(
             With<Player>,
             Without<DefeatedPlayer>,
             Without<VictoriousPlayer>,
+            Without<WaitingPlayer>,
         ),
     >,
     cities: Query<&CityOwner, With<City>>,
@@ -458,7 +612,7 @@ pub fn advance_turn(mut turn_state: Query<&mut TurnState>, mut player_state: Res
 pub fn turn_is_resolving(
     turn_state: Query<&TurnState>,
     player_state: Res<PlayerState>,
-    players: Query<(), (With<Player>, Without<DefeatedPlayer>)>,
+    players: ActivePlayersFilter<'_, '_>,
 ) -> bool {
     let Ok(state) = turn_state.single() else {
         return false;
@@ -534,6 +688,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
 
             // Owning player entity.
@@ -911,6 +1066,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1066,6 +1222,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1184,6 +1341,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1318,6 +1476,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1411,6 +1570,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1506,6 +1666,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1823,6 +1984,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let player = world
                 .spawn(Player {
@@ -1898,6 +2060,7 @@ mod tests {
         app.world_mut().spawn(TurnState {
             phase: TurnPhase::WaitingForPlayers,
             turn_number: 3,
+            ..Default::default()
         });
         // No Player entities — simulates all-disconnected state.
         app.update();
@@ -1930,6 +2093,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let player1 = world
                 .spawn((
@@ -1978,6 +2142,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let host_player = world
                 .spawn((
@@ -2026,6 +2191,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let player = world
                 .spawn((

@@ -303,10 +303,11 @@ fn map_size_label(size: MapSize) -> &'static str {
 pub fn update_lobby_ui(
     mut commands: Commands,
     turn_state: Query<&TurnState>,
-    players: Query<(Entity, &Player)>,
+    players: Query<(Entity, &Player), (Without<DefeatedPlayer>, Without<VictoriousPlayer>)>,
     hosts: Query<Entity, With<Host>>,
     controller: Res<Controller>,
     waiting_players: Query<(), With<WaitingPlayer>>,
+    match_result: Query<(), Or<(With<DefeatedPlayer>, With<VictoriousPlayer>)>>,
     mut overlay_nodes: Query<&mut Node, With<LobbyOverlay>>,
     mut start_btn_nodes: Query<
         &mut Node,
@@ -344,14 +345,22 @@ pub fn update_lobby_ui(
         .player_entity
         .is_some_and(|e| waiting_players.contains(e));
 
+    // While the win/lose overlay is showing the match result, keep the lobby
+    // hidden even if the server has already returned to Lobby phase. The lobby
+    // will appear once the player clicks "Return to Lobby" and the server
+    // removes their DefeatedPlayer/VictoriousPlayer marker.
+    let has_match_result = controller
+        .player_entity
+        .is_some_and(|e| match_result.contains(e));
+
     for mut node in &mut overlay_nodes {
-        node.display = if in_lobby || is_waiting {
+        node.display = if (in_lobby || is_waiting) && !has_match_result {
             Display::Flex
         } else {
             Display::None
         };
     }
-    if !in_lobby && !is_waiting {
+    if (!in_lobby && !is_waiting) || has_match_result {
         return;
     }
 

@@ -2,7 +2,9 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::ClientTriggerExt;
 use shared::cities::{City, CityOwner, CityStats};
 use shared::components::*;
-use shared::events::{CityAction, CityActionEvent, FinishTurn, UnitAction, UnitActionEvent};
+use shared::events::{
+    CityAction, CityActionEvent, FinishTurn, ReturnToLobby, UnitAction, UnitActionEvent,
+};
 use shared::hex::HexPosition;
 use shared::production::{CityProduction, ProductionOutput, ProductionRecipeId, RecipeRegistry};
 use shared::unit_definition::{UnitRegistry, UnitVerb, available_verbs};
@@ -31,6 +33,9 @@ impl Default for TooltipsEnabled {
 pub struct TurnUiText;
 
 #[derive(Component)]
+pub struct TimerUiText;
+
+#[derive(Component)]
 pub struct FinishTurnButton;
 
 #[derive(Component)]
@@ -50,6 +55,9 @@ pub struct ProductionBar;
 
 #[derive(Component)]
 pub struct ProductionButton(pub Option<ProductionRecipeId>);
+
+#[derive(Component)]
+pub struct ReturnToLobbyButton;
 
 #[derive(Component)]
 pub struct LoseScreen;
@@ -113,6 +121,21 @@ pub fn spawn_turn_ui(mut commands: Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(10.0),
             left: Val::Px(10.0),
+            ..default()
+        },
+    ));
+    commands.spawn((
+        TimerUiText,
+        Text::new(""),
+        TextFont {
+            font_size: 28.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(106.0),
+            right: Val::Px(20.0),
             ..default()
         },
     ));
@@ -286,79 +309,113 @@ pub fn spawn_turn_ui(mut commands: Commands) {
         },
     ));
 
-    commands.spawn((
-        LoseScreen,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            top: Val::Px(0.0),
-            bottom: Val::Px(0.0),
-            display: Display::None,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(16.0),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-        GlobalZIndex(100),
-        children![
-            (
+    commands
+        .spawn((
+            LoseScreen,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(16.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+            GlobalZIndex(100),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
                 Text::new("You lost"),
                 TextFont {
                     font_size: 64.0,
                     ..default()
                 },
                 TextColor(Color::srgb(0.9, 0.1, 0.1)),
-            ),
-            (
-                Text::new("Close the app to leave the game."),
-                TextFont {
-                    font_size: 24.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            )
-        ],
-    ));
+            ));
+            parent
+                .spawn((
+                    ReturnToLobbyButton,
+                    Button,
+                    Node {
+                        width: Val::Px(260.0),
+                        height: Val::Px(60.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(4.0)),
+                        border_radius: BorderRadius::all(Val::Px(10.0)),
+                        ..default()
+                    },
+                    BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                    BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
+                ))
+                .with_child((
+                    Text::new("Return to Lobby"),
+                    TextFont {
+                        font_size: 24.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+        });
 
-    commands.spawn((
-        VictoryScreen,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            top: Val::Px(0.0),
-            bottom: Val::Px(0.0),
-            display: Display::None,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(16.0),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-        GlobalZIndex(100),
-        children![
-            (
+    commands
+        .spawn((
+            VictoryScreen,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(16.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+            GlobalZIndex(100),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
                 Text::new("You won"),
                 TextFont {
                     font_size: 64.0,
                     ..default()
                 },
                 TextColor(Color::srgb(0.1, 0.85, 0.25)),
-            ),
-            (
-                Text::new("Close the app to leave the game."),
-                TextFont {
-                    font_size: 24.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            )
-        ],
-    ));
+            ));
+            parent
+                .spawn((
+                    ReturnToLobbyButton,
+                    Button,
+                    Node {
+                        width: Val::Px(260.0),
+                        height: Val::Px(60.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(4.0)),
+                        border_radius: BorderRadius::all(Val::Px(10.0)),
+                        ..default()
+                    },
+                    BorderColor::from(theme::FINISH_BUTTON.border.idle),
+                    BackgroundColor::from(theme::FINISH_BUTTON.background.idle),
+                ))
+                .with_child((
+                    Text::new("Return to Lobby"),
+                    TextFont {
+                        font_size: 24.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+        });
 
     commands
         .spawn((
@@ -481,11 +538,16 @@ pub fn finish_turn_visual_system(
 pub fn reset_ui_state_on_turn_state_change(
     mut next_ui_state: ResMut<NextState<UiState>>,
     turn_state: Query<&TurnState, Changed<TurnState>>,
+    mut last_key: Local<Option<(u32, TurnPhase)>>,
 ) {
-    if !turn_state.is_empty() {
-        next_ui_state.set(UiState::Input {
-            selection: InputSelection::Idle,
-        });
+    for state in &turn_state {
+        let key = (state.turn_number, state.phase.clone());
+        if last_key.as_ref() != Some(&key) {
+            *last_key = Some(key);
+            next_ui_state.set(UiState::Input {
+                selection: InputSelection::Idle,
+            });
+        }
     }
 }
 
@@ -866,8 +928,12 @@ pub fn update_production_bar(
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
     mut bars: Query<&mut Node, With<ProductionBar>>,
+    mut prev_game_over: Local<bool>,
 ) {
-    if !controller.is_changed() && defeated.is_empty() && victorious.is_empty() {
+    let game_over = local_player_game_over(&controller, &defeated, &victorious);
+    let game_over_changed = game_over != *prev_game_over;
+    *prev_game_over = game_over;
+    if !controller.is_changed() && !game_over_changed {
         return;
     }
 
@@ -893,8 +959,12 @@ pub fn update_action_bar(
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
+    mut prev_game_over: Local<bool>,
 ) {
-    if !ui_state.is_changed() && defeated.is_empty() && victorious.is_empty() {
+    let game_over = local_player_game_over(&controller, &defeated, &victorious);
+    let game_over_changed = game_over != *prev_game_over;
+    *prev_game_over = game_over;
+    if !ui_state.is_changed() && !game_over_changed {
         return;
     }
     if local_player_game_over(&controller, &defeated, &victorious) {
@@ -1201,6 +1271,46 @@ pub fn update_lose_screen(
     }
 }
 
+pub fn update_timer_ui(
+    turn_state: Query<&TurnState>,
+    last_submitted: Res<LastSubmittedTurn>,
+    mut timer_text: Query<&mut Text, With<TimerUiText>>,
+) {
+    let Ok(mut text) = timer_text.single_mut() else {
+        return;
+    };
+
+    let Ok(state) = turn_state.single() else {
+        **text = String::new();
+        return;
+    };
+
+    if state.phase != TurnPhase::Accepting {
+        **text = String::new();
+        return;
+    }
+
+    // Hide timer once the local player has submitted — they are waiting for others.
+    if last_submitted.0.is_some_and(|t| t >= state.turn_number) {
+        **text = String::new();
+        return;
+    }
+
+    let remaining = TURN_DURATION_SECS.saturating_sub(state.turn_elapsed_secs);
+    **text = format!("{}:{:02}", remaining / 60, remaining % 60);
+}
+
+pub fn return_to_lobby_trigger_system(
+    mut commands: Commands,
+    interaction_query: Query<&Interaction, (With<ReturnToLobbyButton>, Changed<Interaction>)>,
+) {
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            commands.client_trigger(ReturnToLobby);
+        }
+    }
+}
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
@@ -1218,6 +1328,7 @@ impl Plugin for UiPlugin {
                     update_player_color_indicator,
                     update_unit_tooltip,
                     update_tooltip_toggle_button,
+                    update_timer_ui,
                     update_city_ui,
                     update_action_bar,
                     update_production_bar,
@@ -1226,6 +1337,7 @@ impl Plugin for UiPlugin {
                     finish_turn_visual_system,
                     reset_ui_state_on_turn_state_change,
                     update_lose_screen,
+                    return_to_lobby_trigger_system,
                 ),
             );
     }
