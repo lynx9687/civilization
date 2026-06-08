@@ -15,7 +15,10 @@ use shared::{
 };
 
 use crate::HEX_SIZE;
-use crate::visuals::HexMaterials;
+use crate::visuals::{HexMaterials, HoverHighlightVisual, hex_mesh};
+
+const HOVER_HIGHLIGHT_Z: f32 = 0.2;
+const TARGET_DOT_Z: f32 = 3.0;
 
 /// Tracks which turn the local player last submitted a move for.
 #[derive(Resource, Default)]
@@ -24,6 +27,12 @@ pub struct LastSubmittedTurn(pub Option<u32>);
 /// Tracks the currently hovered hex for highlighting.
 #[derive(Resource, Default)]
 pub struct HoveredHex(Option<HexPosition>);
+
+impl HoveredHex {
+    pub fn current(&self) -> Option<HexPosition> {
+        self.0
+    }
+}
 
 /// Tracks the local player id and other permanent identity info.
 #[derive(Resource, Default)]
@@ -96,6 +105,12 @@ pub enum TargetableVerb {
     Attack,
 }
 
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetDotType {
+    Move,
+    Attack,
+}
+
 #[derive(SystemParam)]
 pub struct CursorWorld<'w, 's> {
     windows: Query<'w, 's, &'static Window>,
@@ -106,9 +121,11 @@ type TileHighlightQuery<'w, 's> = Query<
     'w,
     's,
     (
+        Entity,
         &'static HexPosition,
         Option<&'static TileOwner>,
         Option<&'static Terrain>,
+        Option<&'static Children>,
         &'static mut MeshMaterial2d<ColorMaterial>,
     ),
     With<HexTile>,
@@ -122,10 +139,20 @@ fn get_cursor_hex(cursor: &CursorWorld) -> Option<HexPosition> {
     Some(pixel_to_hex(world_pos, HEX_SIZE))
 }
 
+#[derive(SystemParam)]
+pub struct MeshAssets<'w, 's> {
+    pub assets: ResMut<'w, Assets<Mesh>>,
+    pub hover_highlights: Query<'w, 's, (), With<HoverHighlightVisual>>,
+    pub dot: Local<'s, Option<Handle<Mesh>>>,
+    pub hover: Local<'s, Option<Handle<Mesh>>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn update_hex_highlights(
     cursor: CursorWorld,
+    mut commands: Commands,
     mut tiles: TileHighlightQuery,
+    mut mesh_bundle: MeshAssets,
     hex_materials: Res<HexMaterials>,
     mut hovered: ResMut<HoveredHex>,
     ui_state: Res<State<UiState>>,
@@ -137,8 +164,14 @@ pub fn update_hex_highlights(
     controller: Res<Controller>,
     defeated: Query<(), With<DefeatedPlayer>>,
     victorious: Query<(), With<VictoriousPlayer>>,
-    players: Query<&Player>,
+    dot_type_query: Query<&TargetDotType>,
 ) {
+    let (meshes, hover_highlights, dot_mesh, hover_mesh) = (
+        &mut mesh_bundle.assets,
+        &mesh_bundle.hover_highlights,
+        &mut mesh_bundle.dot,
+        &mut mesh_bundle.hover,
+    );
     let cursor_hex = get_cursor_hex(&cursor);
     hovered.0 = cursor_hex;
 
@@ -214,25 +247,78 @@ pub fn update_hex_highlights(
         }
     };
 
-    for (pos, owner, terrain, mut material) in &mut tiles {
+    for (entity, pos, _owner, terrain, children, mut material) in &mut tiles {
+        // Always keep the base terrain material on the tile. Hover is drawn as a
+        // child overlay so terrain textures and ownership visuals stay intact.
+        let base = terrain
+            .map(|t| hex_materials.terrain_material(*t))
+            .unwrap_or_else(|| hex_materials.default.clone());
+        *material = MeshMaterial2d(base);
+
+        let existing_hover = children.and_then(|children| {
+            children
+                .iter()
+                .find(|child| hover_highlights.get(*child).is_ok())
+        });
+
         if cursor_hex == Some(*pos) {
-            *material = MeshMaterial2d(hex_materials.hovered.clone());
-        } else if attack_targets.contains(pos) {
-            *material = MeshMaterial2d(hex_materials.valid_attack.clone());
+            if existing_hover.is_none() {
+                commands.entity(entity).with_children(|parent| {
+                    let mesh_handle = hover_mesh
+                        .get_or_insert_with(|| meshes.add(hex_mesh(HEX_SIZE * 0.95)))
+                        .clone();
+                    parent.spawn((
+                        HoverHighlightVisual,
+                        Mesh2d(mesh_handle),
+                        MeshMaterial2d(hex_materials.hover.clone()),
+                        Transform::from_xyz(0.0, 0.0, HOVER_HIGHLIGHT_Z),
+                    ));
+                });
+            }
+        } else if let Some(existing_hover) = existing_hover {
+            commands.entity(existing_hover).despawn();
+        }
+
+        let desired_dot = if attack_targets.contains(pos) {
+            Some(TargetDotType::Attack)
         } else if move_targets.contains(pos) {
-            *material = MeshMaterial2d(hex_materials.valid_move.clone());
-        } else if let Some(tile_owning_player) = owner.and_then(|x| x.player_entity) {
-            let Ok(owning_player) = players.get(tile_owning_player) else {
-                continue;
-            };
-            *material =
-                MeshMaterial2d(hex_materials.claimed[owning_player.color_index as usize].clone());
+            Some(TargetDotType::Move)
         } else {
-            // Unhighlighted tiles repaint to their terrain's base material.
-            let base = terrain
-                .map(|t| hex_materials.terrain_material(*t))
-                .unwrap_or_else(|| hex_materials.default.clone());
-            *material = MeshMaterial2d(base);
+            None
+        };
+
+        let existing_dot = children.and_then(|children| {
+            children
+                .iter()
+                .find(|child| dot_type_query.get(*child).is_ok())
+        });
+
+        if let Some(existing) = existing_dot {
+            if desired_dot.is_none() {
+                commands.entity(existing).despawn();
+                continue;
+            }
+            if let Ok(current) = dot_type_query.get(existing) {
+                if *current != desired_dot.unwrap() {
+                    commands.entity(existing).despawn();
+                } else {
+                    continue;
+                }
+            }
+        }
+
+        if let Some(dot_type) = desired_dot {
+            commands.entity(entity).with_children(|parent| {
+                let mesh_handle = dot_mesh
+                    .get_or_insert_with(|| meshes.add(RegularPolygon::new(HEX_SIZE * 0.18, 16)))
+                    .clone();
+                parent.spawn((
+                    dot_type,
+                    Mesh2d(mesh_handle),
+                    MeshMaterial2d(hex_materials.target_dot.clone()),
+                    Transform::from_xyz(0.0, 0.0, TARGET_DOT_Z),
+                ));
+            });
         }
     }
 }
@@ -496,9 +582,21 @@ pub fn prune_stale_selection(
 
 pub fn reset_submission_on_new_turn(
     turn_state: Query<&TurnState, Changed<TurnState>>,
-    last_submitted: Res<LastSubmittedTurn>,
+    mut last_submitted: ResMut<LastSubmittedTurn>,
+    mut last_logged_turn: Local<Option<u32>>,
 ) {
     for state in &turn_state {
+        // Guard: only act once per distinct turn_number value.
+        if *last_logged_turn == Some(state.turn_number) {
+            continue;
+        }
+        *last_logged_turn = Some(state.turn_number);
+        // When a new match starts turn_number resets to 0 while last_submitted
+        // still holds the final turn of the previous match. Clear it so that
+        // handle_left_click doesn't block input on the first turn of the new match.
+        if last_submitted.0.is_some_and(|t| t > state.turn_number) {
+            last_submitted.0 = None;
+        }
         if let Some(submitted) = last_submitted.0
             && state.turn_number > submitted
         {

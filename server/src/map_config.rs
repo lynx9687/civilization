@@ -90,6 +90,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             let host_player = world
                 .spawn((
@@ -130,6 +131,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Lobby,
                 turn_number: 0,
+                ..Default::default()
             });
             // Host exists, but the message comes from a different (non-host) player.
             world.spawn((
@@ -176,6 +178,7 @@ mod tests {
             world.spawn(TurnState {
                 phase: TurnPhase::Accepting,
                 turn_number: 1,
+                ..Default::default()
             });
             let host_player = world
                 .spawn((

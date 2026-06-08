@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use shared::{
-    components::{HexTile, PLAYER_COLORS},
+    components::{DefeatedPlayer, HexTile, OwnershipBorder, PLAYER_COLORS, Player},
     hex::{HexPosition, hex_to_pixel},
     terrain::Terrain,
+    tiles::TileOwner,
 };
 
 use crate::HEX_SIZE;
@@ -12,25 +13,35 @@ use bevy::{
     mesh::{Indices, PrimitiveTopology},
 };
 
-const HEX_TINT_STRENGTH: f32 = 1.0;
 const HEX_MESH_ROTATION: f32 = std::f32::consts::FRAC_PI_6;
 
 /// Handles to shared hex materials for highlighting.
 #[derive(Resource)]
 pub struct HexMaterials {
     pub default: Handle<ColorMaterial>,
-    pub hovered: Handle<ColorMaterial>,
-    pub valid_move: Handle<ColorMaterial>,
-    pub claimed: Vec<Handle<ColorMaterial>>,
-    pub valid_attack: Handle<ColorMaterial>,
+    /// Translucent material drawn over a hovered tile without replacing its terrain texture.
+    pub hover: Handle<ColorMaterial>,
+    pub target_dot: Handle<ColorMaterial>,
     /// Base material per terrain, indexed by `terrain as usize` (see `Terrain::ALL`).
     pub terrain: Vec<Handle<ColorMaterial>>,
+    /// Ownership border materials (player colors), indexed by player color_index.
+    pub ownership_border: Vec<Handle<ColorMaterial>>,
 }
 
 impl HexMaterials {
     /// The unhighlighted base material for a tile's terrain.
     pub fn terrain_material(&self, terrain: Terrain) -> Handle<ColorMaterial> {
         self.terrain[terrain as usize].clone()
+    }
+}
+
+/// Untextured solid color — used where a tint of the grass texture can't reach
+/// the target hue (mountain gray, water blue).
+fn flat_material(color: Color) -> ColorMaterial {
+    ColorMaterial {
+        color,
+        texture: None,
+        ..default()
     }
 }
 
@@ -42,22 +53,8 @@ pub fn setup_hex_materials(
     let default_texture = asset_server.load("textures/tiles/grass.png");
     let hex_materials = HexMaterials {
         default: materials.add(hex_material(default_texture.clone(), Color::WHITE)),
-        hovered: materials.add(tinted_hex_material(
-            default_texture.clone(),
-            Color::srgb(0.8, 0.8, 0.9),
-        )),
-        valid_move: materials.add(tinted_hex_material(
-            default_texture.clone(),
-            Color::srgb(0.4, 0.8, 0.4),
-        )),
-        claimed: PLAYER_COLORS
-            .iter()
-            .map(|color| materials.add(tinted_hex_material(default_texture.clone(), *color)))
-            .collect(),
-        valid_attack: materials.add(tinted_hex_material(
-            default_texture.clone(),
-            Color::srgb(0.8, 0.3, 0.3),
-        )),
+        hover: materials.add(ColorMaterial::from(Color::srgba(1.0, 1.0, 1.0, 0.28))),
+        target_dot: materials.add(ColorMaterial::from(Color::srgb(0.35, 0.35, 0.35))),
         // Distinct texture per terrain, indexed by `terrain as usize`.
         // Iterating `Terrain::ALL` keeps index == discriminant reorder-safe.
         terrain: Terrain::ALL
@@ -68,6 +65,12 @@ pub fn setup_hex_materials(
                     Color::WHITE,
                 ))
             })
+            .collect(),
+        // Ownership border materials (flat player colors, no texture).
+        // Indexed by player color_index for easy lookup.
+        ownership_border: PLAYER_COLORS
+            .iter()
+            .map(|color| materials.add(flat_material(*color)))
             .collect(),
     };
     commands.insert_resource(hex_materials);
@@ -94,7 +97,7 @@ pub fn spawn_hex_visuals(
 
 /// Creates the flat-top hex geometry directly so terrain textures stay aligned
 /// with the world instead of rotating with the entity transform.
-fn hex_mesh(radius: f32) -> Mesh {
+pub(crate) fn hex_mesh(radius: f32) -> Mesh {
     let mut positions = Vec::with_capacity(7);
     let mut normals = Vec::with_capacity(7);
     let mut uvs = Vec::with_capacity(7);
@@ -141,23 +144,113 @@ fn terrain_texture_path(terrain: Terrain) -> &'static str {
     }
 }
 
-fn tinted_hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
-    let srgba_color = color.to_srgba();
-    let soften = |channel| 0.5 + channel * HEX_TINT_STRENGTH;
-    hex_material(
-        texture,
-        Color::srgb(
-            soften(srgba_color.red),
-            soften(srgba_color.green),
-            soften(srgba_color.blue),
-        ),
-    )
-}
-
 fn hex_material(texture: Handle<Image>, color: Color) -> ColorMaterial {
     ColorMaterial {
         color,
         texture: Some(texture),
         ..default()
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct OwnershipBorderVisual;
+
+#[derive(Component)]
+pub(crate) struct HoverHighlightVisual;
+
+/// Spawn a larger ownership hex behind the real terrain tile.
+/// The terrain remains visible in the interior, while the border color shows ownership.
+pub fn spawn_ownership_borders(
+    tiles: Query<(Entity, &OwnershipBorder), Added<OwnershipBorder>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    hex_materials: Res<HexMaterials>,
+) {
+    for (entity, ownership) in &tiles {
+        let border_material_handle =
+            hex_materials.ownership_border[ownership.color_index as usize].clone();
+        let border_size = HEX_SIZE * 1.05;
+        commands.entity(entity).with_children(|parent| {
+            parent.spawn((
+                OwnershipBorderVisual,
+                Mesh2d(meshes.add(hex_mesh(border_size))),
+                MeshMaterial2d(border_material_handle),
+                Transform::from_xyz(0.0, 0.0, -0.1),
+            ));
+        });
+    }
+}
+
+pub fn update_ownership_border_colors(
+    changed_ownership: Query<(&OwnershipBorder, &Children), Changed<OwnershipBorder>>,
+    mut border_materials: Query<&mut MeshMaterial2d<ColorMaterial>, With<OwnershipBorderVisual>>,
+    hex_materials: Res<HexMaterials>,
+) {
+    for (ownership, children) in &changed_ownership {
+        let desired_material =
+            hex_materials.ownership_border[ownership.color_index as usize].clone();
+        for child in children.iter() {
+            if let Ok(mut material) = border_materials.get_mut(child) {
+                *material = MeshMaterial2d(desired_material.clone());
+            }
+        }
+    }
+}
+
+pub fn cleanup_ownership_border_visuals(
+    mut commands: Commands,
+    owned_borders: Query<(Entity, &ChildOf), With<OwnershipBorderVisual>>,
+    owners: Query<&OwnershipBorder>,
+) {
+    for (entity, parent) in &owned_borders {
+        if owners.get(parent.0).is_err() {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+type OwnershipBorderSyncQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        Option<&'static TileOwner>,
+        Option<&'static OwnershipBorder>,
+    ),
+    With<HexTile>,
+>;
+
+pub fn sync_ownership_borders(
+    mut commands: Commands,
+    tiles: OwnershipBorderSyncQuery,
+    players: Query<&Player, Without<DefeatedPlayer>>,
+) {
+    for (entity, tile_owner, existing_border) in &tiles {
+        match tile_owner {
+            Some(owner) => {
+                if let Some(player_entity) = owner.player_entity
+                    && let Ok(player) = players.get(player_entity)
+                {
+                    let desired = OwnershipBorder {
+                        color_index: player.color_index,
+                    };
+                    if existing_border
+                        .map(|existing| existing.color_index != desired.color_index)
+                        .unwrap_or(true)
+                    {
+                        commands.entity(entity).insert(desired);
+                    }
+                    continue;
+                }
+                if existing_border.is_some() {
+                    commands.entity(entity).remove::<OwnershipBorder>();
+                }
+            }
+            None => {
+                if existing_border.is_some() {
+                    commands.entity(entity).remove::<OwnershipBorder>();
+                }
+            }
+        }
     }
 }

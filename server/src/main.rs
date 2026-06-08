@@ -30,7 +30,10 @@ use map_config::handle_set_map_config;
 use map_gen::{
     MapTiles, cleanup_map_on_lobby, generate_map_on_start, should_cleanup_map, should_generate_map,
 };
-use players::{PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players};
+use players::{
+    PlayerMap, handle_disconnects, handle_new_clients, promote_waiting_players,
+    reindex_lobby_players,
+};
 use turn::*;
 
 #[derive(Resource)]
@@ -57,6 +60,7 @@ fn main() {
         .insert_resource(BindAddr(addr))
         .init_resource::<PlayerMap>()
         .init_resource::<PlayerState>()
+        .init_resource::<TurnTimerState>()
         .init_resource::<MapTiles>()
         .init_resource::<MapSettings>()
         .add_systems(Startup, (start_server, spawn_initial_state))
@@ -64,6 +68,7 @@ fn main() {
         .add_observer(handle_city_action)
         .add_observer(handle_finish_turn)
         .add_observer(handle_start_game)
+        .add_observer(handle_return_to_lobby)
         .add_observer(handle_set_map_config)
         .add_observer(claim_city_tiles)
         .add_observer(complete_unit_production)
@@ -76,7 +81,9 @@ fn main() {
                 generate_map_on_start.run_if(should_generate_map),
                 cleanup_map_on_lobby.run_if(should_cleanup_map),
                 promote_waiting_players,
+                reindex_lobby_players,
                 recalculate_city_yields.run_if(any_city_yields_need_recalculation),
+                update_turn_timer,
                 // Resolution window: gated as a group so all resolvers see
                 // a consistent "turn end" world; advance_turn closes the window.
                 (
@@ -198,6 +205,7 @@ fn spawn_initial_state(mut commands: Commands) {
     commands.spawn(TurnState {
         phase: TurnPhase::Lobby,
         turn_number: 0,
+        turn_elapsed_secs: 0,
     });
     println!("Server ready; map will be generated when the host starts a game");
 }

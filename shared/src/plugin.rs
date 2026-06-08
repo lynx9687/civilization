@@ -42,6 +42,7 @@ impl Plugin for SharedPlugin {
             .add_client_event::<FinishTurn>(Channel::Ordered)
             .add_client_event::<StartGame>(Channel::Ordered)
             .add_client_event::<SetMapConfig>(Channel::Ordered)
+            .add_client_event::<ReturnToLobby>(Channel::Ordered)
             .add_mapped_server_event::<YourPlayer>(Channel::Ordered)
             .add_systems(
                 Startup,

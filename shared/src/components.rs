@@ -15,17 +15,24 @@ pub struct Player {
     pub gold: i32,
 }
 
+/// Seconds allowed per turn; enforced server-side, displayed client-side.
+pub const TURN_DURATION_SECS: u32 = 60;
+
 /// Replicated turn state — lives on a single entity spawned by the server.
 /// We use entity rather than resource because entities can be autmatically replicated by replicon
-#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[require(Replicated)]
 pub struct TurnState {
     pub phase: TurnPhase,
     pub turn_number: u32,
+    /// Seconds elapsed in the current turn, updated every second by the server.
+    /// Replicated so clients can display an accurate countdown even after reconnecting.
+    pub turn_elapsed_secs: u32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub enum TurnPhase {
+    #[default]
     Lobby,
     WaitingForPlayers,
     Accepting,
@@ -65,6 +72,25 @@ pub const PLAYER_COLORS: [Color; 8] = [
     Color::srgb(0.6, 0.2, 0.9), // purple
 ];
 
+pub const PLAYER_BORDER_COLORS: [Color; 8] = [
+    Color::srgba(0.9, 0.2, 0.2, 0.25),
+    Color::srgba(0.2, 0.4, 0.9, 0.25),
+    Color::srgba(0.2, 0.8, 0.2, 0.25),
+    Color::srgba(0.9, 0.9, 0.2, 0.25),
+    Color::srgba(0.9, 0.2, 0.9, 0.25),
+    Color::srgba(0.2, 0.9, 0.9, 0.25),
+    Color::srgba(0.9, 0.6, 0.2, 0.25),
+    Color::srgba(0.6, 0.2, 0.9, 0.25),
+];
+
 pub fn player_color(index: u8) -> Color {
     PLAYER_COLORS[index as usize % PLAYER_COLORS.len()]
+}
+
+/// Marker component for hex tiles that should display an ownership border.
+/// Attached when a city claims a tile. Used by the client to render a subtle
+/// border indicating city ownership while preserving terrain visibility.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct OwnershipBorder {
+    pub color_index: u8,
 }
